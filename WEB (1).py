@@ -3256,12 +3256,11 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
+
     # Then load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
-
     html, body, [class*="css"] {
         font-family: 'Open Sans', sans-serif;
         font-size: 14px;
@@ -3269,11 +3268,9 @@ def main():
         font-weight: 400;
         color: #2d3748;
     }
-
     .main-title, .section-title, .hero-title, .step-title {
         font-family: 'Playfair Display', serif;
     }
-
     .main {
         background: linear-gradient(135deg, #98F5E1 0%, #B8F5D1 50%, #D1F5E8 100%);
         min-height: 100vh;
@@ -3289,8 +3286,6 @@ def main():
         margin-bottom: 0.5rem;
         border: 1px solid rgba(255, 255, 255, 0.3);
     }
-
-    /* Titles */
     .main-title {
         font-size: 2.5rem;
         font-weight: 700;
@@ -3325,8 +3320,6 @@ def main():
         height: 2px;
         background: #38a169;
     }
-
-    /* Card Styling */
     .feature-card {
         background: rgba(255, 255, 255, 0.8);
         backdrop-filter: blur(8px);
@@ -3351,8 +3344,6 @@ def main():
         height: 3px;
         background: linear-gradient(90deg, #48bb78, #38a169);
     }
-
-    /* Metric Card */
     .metric-card {
         background: rgba(255, 255, 255, 0.85);
         backdrop-filter: blur(8px);
@@ -3380,8 +3371,6 @@ def main():
         -webkit-text-fill-color: transparent;
         line-height: 1;
     }
-
-    /* Status Tags */
     .status-success, .status-error, .status-warning {
         font-family: 'Open Sans', sans-serif;
         padding: 0.6rem 1.2rem;
@@ -3401,8 +3390,6 @@ def main():
     .status-warning {
         background: linear-gradient(135deg, #ed8936, #dd6b20);
     }
-
-    /* Buttons */
     .stButton > button, .stDownloadButton > button {
         font-family: 'Open Sans', sans-serif !important;
         background: linear-gradient(135deg, #48bb78, #38a169) !important;
@@ -3418,8 +3405,6 @@ def main():
         transform: translateY(-1px) !important;
         box-shadow: 0 4px 16px rgba(72, 187, 120, 0.4) !important;
     }
-
-    /* Animations */
     .fade-in {
         animation: fadeIn 0.8s ease-in;
     }
@@ -3436,17 +3421,16 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-    
+
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
-    
-    # Initialize navigation state
+
     if 'nav' not in st.session_state:
         st.session_state.nav = "Home"
-    
-    # Sidebar navigation
+
+    # Sidebar
     with st.sidebar:
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -3455,7 +3439,7 @@ def main():
             <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">Welcome, {st.session_state.user_name}</div>
         </div>
         """, unsafe_allow_html=True)
-        
+
         # Navigation menu
         menu_options = {
             "🏠 Home": "Home",
@@ -3464,27 +3448,23 @@ def main():
             "📊 Analytics": "Analytics",
             "📧 Messages": "Messages"
         }
-        
-        # Add admin panel if user is admin
+
         if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
-        
-        # Create navigation buttons
+
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
-                st.session_state.nav = page
-                st.rerun()
+                if st.session_state.nav != page:
+                    st.session_state.nav = page
+                    st.rerun()
 
-        
-        # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
+            st.session_state.nav = "Home"
             st.rerun()
 
-        
-        # System status
         st.sidebar.markdown("---")
         st.sidebar.markdown("""
         <div style="font-size: 0.75rem; color: #718096; text-align: center;">
@@ -3492,7 +3472,7 @@ def main():
             <br>v1.0.0
         </div>
         """, unsafe_allow_html=True)
-    
+
     # Page routing
     if st.session_state.nav == "Home":
         show_home_page()
@@ -3508,11 +3488,11 @@ def main():
         show_admin_panel()
     else:
         st.warning("Page not found")
-        st.session_state.nav = "Home"
-        st.rerun()
+        if st.session_state.nav != "Home":
+            st.session_state.nav = "Home"
+            st.rerun()
 
 
+# Entry point
 if __name__ == "__main__":
     main()
-
-
