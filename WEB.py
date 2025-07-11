@@ -401,7 +401,7 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin0@gmail.com', 
+                    'admin@gmail.com', 
                     hash_password("admin.com"),
                     'admin',
                     'approved',
