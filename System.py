@@ -39,7 +39,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "zambica_salt"  # In production, use a unique salt per user
+    salt = "admin_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -393,8 +393,8 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'zambica360@gmail.com', 
-                    hash_password("zambica.com"),
+                    'admin@cataract.com', 
+                    hash_password("admin.com"),
                     'admin',
                     'approved',
                     1  # self-approved
@@ -447,15 +447,15 @@ def init_database():
         if current_version < 3:
             try:
                 # Verify admin password
-                cursor.execute("SELECT id, password FROM users WHERE email = 'zambica360@gmail.com'")
+                cursor.execute("SELECT id, password FROM users WHERE email = 'admin@cataract.com'")
                 admin = cursor.fetchone()
                 
                 if admin:
                     admin_id, current_password = admin
-                    if not verify_password("zambica.com", current_password):
+                    if not verify_password("admin@cataract.com", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
-                        ''', (hash_password("zambica.com"), admin_id))
+                        ''', (hash_password("admin.com"), admin_id))
                         conn.commit()
                 
                 cursor.execute("INSERT INTO migrations (version) VALUES (3)")
@@ -529,27 +529,112 @@ def get_patient_by_id(patient_id):
 # 👁️ Detection Functions
 # -------------------------------
 def load_detection_model():
-    """Load the cataract detection model with error handling for batch_shape"""
+    """Load the cataract detection model from the active model in database"""
+    conn = None
     try:
-        if not os.path.exists(MODEL_PATH):
-            st.error(f"Model file not found at: {os.path.abspath(MODEL_PATH)}")
-            st.error(f"Please ensure the model file '{MODEL_FILENAME}' exists in the directory: {MODEL_DIR}")
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Get the most recent active model from database
+        cursor.execute('''
+            SELECT path FROM model_versions 
+            ORDER BY uploaded_at DESC 
+            LIMIT 1
+        ''')
+        result = cursor.fetchone()
+        
+        if result:
+            model_path = result[0]
+            # Convert to absolute path if stored as relative
+            if not os.path.isabs(model_path):
+                model_path = str(REPO_ROOT / model_path)
+            
+            if os.path.exists(model_path):
+                model = load_model(model_path)
+                st.session_state.current_model = model_path
+                return model
+            else:
+                st.warning(f"Model file not found at {model_path}. Using default model.")
+        
+        # Fallback to default model if no model in database or file missing
+        if os.path.exists(MODEL_PATH):
+            model = load_model(MODEL_PATH)
+            st.session_state.current_model = MODEL_PATH
+            return model
+        else:
+            st.error("No valid model found in database or default location")
             return None
             
-        # Load model with custom objects if needed
-        try:
-            model = load_model(MODEL_PATH)
-            return model
-        except TypeError as e:
-            if "Unrecognized keyword arguments: ['batch_shape']" in str(e):
-                # Try loading without the batch_shape parameter
-                model = load_model(MODEL_PATH, compile=False)
-                return model
-            raise  # Re-raise other TypeError exceptions
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
-        st.error(f"Model path attempted: {MODEL_PATH}")
+        # Try to load default model as last resort
+        try:
+            if os.path.exists(MODEL_PATH):
+                model = load_model(MODEL_PATH)
+                st.session_state.current_model = MODEL_PATH
+                return model
+        except:
+            pass
         return None
+    finally:
+        if conn:
+            conn.close()
+
+def get_active_model_info():
+    """Get information about the currently active model"""
+    active_model = st.session_state.get('current_model', MODEL_PATH)
+    
+    # Get model version info from database
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        
+        # Find the model in database by path (either absolute or relative)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT version, description, uploaded_at, 
+                   (SELECT full_name FROM users WHERE id = uploaded_by) as uploaded_by
+            FROM model_versions
+            WHERE path = ? OR path = ?
+            ORDER BY uploaded_at DESC
+            LIMIT 1
+        ''', (
+            active_model,
+            str(Path(active_model).relative_to(REPO_ROOT)) if REPO_ROOT in Path(active_model).parents else None
+        ))
+        
+        model_info = cursor.fetchone()
+        
+        if model_info:
+            return {
+                "path": active_model,
+                "version": model_info[0],
+                "description": model_info[1],
+                "upload_date": model_info[2],
+                "uploaded_by": model_info[3]
+            }
+        
+        # If not found in database, return basic info
+        return {
+            "path": active_model,
+            "version": "Default Model",
+            "description": "Initial model provided with system",
+            "upload_date": "N/A",
+            "uploaded_by": "System"
+        }
+        
+    except Exception as e:
+        st.error(f"Error getting model info: {str(e)}")
+        return {
+            "path": active_model,
+            "version": "Unknown",
+            "description": "Could not retrieve model details",
+            "upload_date": "N/A",
+            "uploaded_by": "Unknown"
+        }
+    finally:
+        if conn:
+            conn.close()
     
 def enhance_image_quality(img_pil):
     """
@@ -1313,6 +1398,16 @@ def show_detection_page():
     """Show the cataract detection interface with edit/delete functionality"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
     
+    # Display active model information at the top
+    model_info = get_active_model_info()
+    with st.expander("ℹ️ Current Model Information", expanded=True):
+        st.markdown(f"""
+        - **Version:** {model_info['version']}
+        - **Description:** {model_info['description']}
+        - **Uploaded by:** {model_info['uploaded_by']}
+        - **Path:** `{model_info['path']}`
+        """)
+    
     # Tab interface for different functions
     tab1, tab2 = st.tabs(["New Detection", "Manage Detections"])
     
@@ -1350,7 +1445,7 @@ def show_detection_page():
                     patient_id = add_patient(full_name, gender, age, village, traditional_authority, district, marital_status)
                     if patient_id:
                         st.success(f"Patient {full_name} registered successfully!")
-                        st.experimental_rerun()
+                        st.rerun()
         
         # Step 2: Image capture/upload
         if patient_id:
@@ -1413,7 +1508,7 @@ def show_detection_page():
                                         
                                         if detection_id:
                                             st.success("Detection results saved successfully!")
-                                            st.experimental_rerun()
+                                            st.rerun()
                                         else:
                                             st.error("Failed to save detection results")
                 finally:
@@ -1478,11 +1573,11 @@ def show_detection_page():
                             success_count += 1
                     
                     st.success(f"Updated {success_count}/{len(updated_data)} records")
-                    st.experimental_rerun()
+                    st.rerun()
             
             with col2:
                 if st.button("🔄 Refresh Data"):
-                    st.experimental_rerun()
+                    st.rerun()
             
             with col3:
                 if selected_rows and st.button("🗑️ Delete Selected", type="secondary"):
@@ -1492,7 +1587,7 @@ def show_detection_page():
                             success_count += 1
                     
                     st.success(f"Deleted {success_count}/{len(selected_rows)} records")
-                    st.experimental_rerun()
+                    st.rerun()
             
             # Detailed view for selected record
             if selected_rows and len(selected_rows) == 1:
@@ -1533,6 +1628,7 @@ def show_detection_page():
                     conn.close()
         else:
             st.info("No detection records found")
+
 
 # -------------------------------
 # 📅 Appointments Page 
@@ -2518,136 +2614,53 @@ def _display_user_management():
         st.info("No users found in the database")
         _display_add_user_form()
         
-def _display_model_management():
-    """Display model management interface with robust error handling"""
-    st.markdown('<div class="section-title">AI Model Management</div>', unsafe_allow_html=True)
-    
-    # Current Model Info
-    with st.container():
-        st.markdown("""
-        <div class="model-card">
-            <h3>Current Model</h3>
-        """, unsafe_allow_html=True)
+def _update_model(new_model, version, description, release_notes):
+    """Update the AI model"""
+    try:
+        # Create backup directory if it doesn't exist
+        os.makedirs("model_backups", exist_ok=True)
         
-        try:
-            st.code(f"Model Location:\n{os.path.abspath(MODEL_PATH)}", language="text")
-            
-            if os.path.exists(MODEL_PATH):
-                model_info = {
-                    "Last Modified": datetime.fromtimestamp(os.path.getmtime(MODEL_PATH)).strftime('%Y-%m-%d %H:%M:%S'),
-                    "Size": f"{os.path.getsize(MODEL_PATH)/1024/1024:.2f} MB",
-                    "Status": "Found and accessible"
-                }
-                st.json(model_info)
-                
-                try:
-                    # Use the updated load_detection_model function
-                    model = load_detection_model()
-                    if model:
-                        st.success("✅ Model loaded successfully")
-                        
-                        # Safely get input shape
-                        try:
-                            input_shape = model.input_shape[1:3] if hasattr(model, 'input_shape') else "Unknown"
-                            st.markdown(f"**Input Shape:** {input_shape}")
-                        except Exception as shape_error:
-                            st.warning(f"⚠️ Could not determine input shape: {str(shape_error)}")
-                        
-                        st.markdown(f"**Classes:** {CLASS_NAMES}")
-                        
-                        # Model performance metrics
-                        st.markdown("### Performance Metrics")
-                        cols = st.columns(3)
-                        cols[0].metric("Accuracy", "94.2% ±1.2%")
-                        cols[1].metric("Precision", "92.8% ±1.5%")
-                        cols[2].metric("Recall", "93.5% ±1.3%")
-                    else:
-                        st.error("❌ Model loading failed - see error above")
-                except Exception as e:
-                    st.error(f"❌ Model loading error: {str(e)}")
-                    st.error("Please check:")
-                    st.error("1. Model file integrity")
-                    st.error("2. TensorFlow/Keras version compatibility")
-                    st.error("3. Model file format (should be .h5)")
-            else:
-                st.error(f"❌ Model file not found at: {MODEL_PATH}")
-                st.error("Please ensure:")
-                st.error(f"1. The file '{MODEL_FILENAME}' exists in {MODEL_DIR}")
-                st.error("2. You have proper read permissions")
-        except Exception as e:
-            st.error(f"❌ Could not access model file: {str(e)}")
-            st.error("System error details:")
-            st.error(str(e))
+        # Create backup filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = f"model_backups/model_{timestamp}.h5"
         
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Model Update Form
-    with st.container():
-        st.markdown("""
-        <div class="model-card">
-            <h3>Update Model</h3>
-        """, unsafe_allow_html=True)
+        # Backup current model if exists
+        if os.path.exists(MODEL_PATH):
+            shutil.copy2(MODEL_PATH, backup_path)
         
-        with st.form("model_update_form"):
-            new_model = st.file_uploader("Upload new model file (.h5)", type=["h5"])
-            version = st.text_input("Version Number (e.g., 1.2.0)")
-            description = st.text_area("Description")
-            release_notes = st.text_area("Release Notes")
-            
-            if st.form_submit_button("🚀 Deploy Model"):
-                if new_model and version:
-                    try:
-                        # Test loading the new model before deploying
-                        with st.spinner("Validating model file..."):
-                            temp_path = "temp_model.h5"
-                            with open(temp_path, "wb") as f:
-                                f.write(new_model.getbuffer())
-                            
-                            try:
-                                test_model = load_model(temp_path)
-                                st.success("✅ Model validation passed")
-                                _update_model(new_model, version, description, release_notes)
-                            except Exception as e:
-                                st.error(f"❌ Invalid model file: {str(e)}")
-                                st.error("Please upload a valid Keras .h5 model file")
-                            finally:
-                                if os.path.exists(temp_path):
-                                    os.remove(temp_path)
-                    except Exception as e:
-                        st.error(f"Error during model validation: {str(e)}")
-                else:
-                    st.warning("Please upload a model file and specify version number")
+        # Save new model
+        with open(MODEL_PATH, "wb") as f:
+            f.write(new_model.getbuffer())
         
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Version History
-    with st.container():
-        st.markdown("""
-        <div class="model-card">
-            <h3>Version History</h3>
-        """, unsafe_allow_html=True)
-        
+        # Update model version in database
         conn = None
         try:
             conn = sqlite3.connect(DB_NAME)
-            versions = pd.read_sql_query('''
-                SELECT version, description, datetime(uploaded_at, 'localtime') as uploaded_at, 
-                       (SELECT full_name FROM users WHERE id = uploaded_by) as uploaded_by
-                FROM model_versions
-                ORDER BY uploaded_at DESC
-            ''', conn)
+            conn.execute('''
+                INSERT INTO model_versions 
+                (version, description, release_notes, path, uploaded_by)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (version, description, release_notes, MODEL_PATH, st.session_state.user_id))
+            conn.commit()
             
-            if not versions.empty:
-                st.dataframe(versions, use_container_width=True)
-            else:
-                st.info("No version history available")
+            st.success(f"""
+            Model updated successfully to version {version}!
+            Backup saved to: {backup_path}
+            """)
+            time.sleep(1)
+            st.rerun()
         except Exception as e:
-            st.error(f"Error loading version history: {str(e)}")
+            if conn:
+                conn.rollback()
+            # Restore backup if DB update failed
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, MODEL_PATH)
+            st.error(f"Database error: {str(e)}")
         finally:
             if conn:
                 conn.close()
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Model update failed: {str(e)}")
 
 def _display_system_settings():
     """Display system settings interface"""
