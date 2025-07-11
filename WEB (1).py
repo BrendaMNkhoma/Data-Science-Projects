@@ -401,7 +401,7 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin0@gmail.com', 
+                    'admin@gmail.com', 
                     hash_password("admin.com"),
                     'admin',
                     'approved',
@@ -459,7 +459,7 @@ def init_database():
                 admin = cursor.fetchone()
                 
                 if admin:
-                    admin_id, current_password = admin.com
+                    admin_id, current_password = admin
                     if not verify_password("admin.com", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
