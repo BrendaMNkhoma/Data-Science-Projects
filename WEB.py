@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, time
 from PIL import Image, ImageEnhance
 import tensorflow as tf
 from tensorflow.keras.models import load_model
@@ -47,7 +47,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "admin_salt"  # In production, use a unique salt per user
+    salt = "zambica_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -306,7 +306,30 @@ def init_database():
                         FOREIGN KEY (approved_by) REFERENCES users(id)
                     )
                 ''')
-                
+            
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS deleted_appointments (
+                        id INTEGER PRIMARY KEY,
+                        patient_id INTEGER,
+                        patient_name TEXT,
+                        gender TEXT,
+                        age INTEGER,
+                        village TEXT,
+                        traditional_authority TEXT,
+                        district TEXT,
+                        marital_status TEXT,
+                        appointment_date DATE,
+                        appointment_time TEXT,
+                        booked_by TEXT,
+                        doctor_email TEXT,
+                        notes TEXT,
+                        status TEXT,
+                        created_at TIMESTAMP,
+                        deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        deleted_by TEXT
+                    )
+                ''')
+            
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS patients (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,8 +424,8 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin@gmail.com', 
-                    hash_password("admin.com"),
+                    'zambica360@gmail.com', 
+                    hash_password("zambica.com"),
                     'admin',
                     'approved',
                     1  # self-approved
@@ -455,15 +478,15 @@ def init_database():
         if current_version < 3:
             try:
                 # Verify admin password
-                cursor.execute("SELECT id, password FROM users WHERE email = 'admin@gmail.com'")
+                cursor.execute("SELECT id, password FROM users WHERE email = 'zambica360@gmail.com'")
                 admin = cursor.fetchone()
                 
                 if admin:
                     admin_id, current_password = admin
-                    if not verify_password("admin.com", current_password):
+                    if not verify_password("zambica.com", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
-                        ''', (hash_password("admin.com"), admin_id))
+                        ''', (hash_password("zambica.com"), admin_id))
                         conn.commit()
                 
                 cursor.execute("INSERT INTO migrations (version) VALUES (3)")
@@ -656,178 +679,343 @@ def get_active_model_info():
         if conn:
             conn.close()
     
+
 def enhance_image_quality(img_pil):
     """
-    Enhance image clarity, brightness, contrast, and sharpness.
+    Enhance image quality through multiple processing steps.
+    Args:
+        img_pil: PIL Image object
+    Returns:
+        PIL Image: Enhanced image or original if enhancement fails
     """
     try:
-        # Convert to OpenCV BGR format
+        # Convert to OpenCV format (BGR)
         img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-        # Resize for faster enhancement
+        # Resize to model input size
         img_cv = cv2.resize(img_cv, (224, 224))
 
-        # Apply detail enhancement
+        # Apply enhancement pipeline
         img_cv = cv2.detailEnhance(img_cv, sigma_s=10, sigma_r=0.15)
-
-        # Convert back to PIL (RGB)
+        img_cv = cv2.medianBlur(img_cv, 3)  # Reduce noise
+        
+        # Convert back to PIL format (RGB)
         enhanced_pil = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
 
-        # Enhance brightness
+        # Apply brightness, contrast, sharpness adjustments
         enhancer = ImageEnhance.Brightness(enhanced_pil)
         enhanced_pil = enhancer.enhance(1.2)
 
-        # Enhance contrast
         enhancer = ImageEnhance.Contrast(enhanced_pil)
         enhanced_pil = enhancer.enhance(1.3)
 
-        # Enhance sharpness
         enhancer = ImageEnhance.Sharpness(enhanced_pil)
         enhanced_pil = enhancer.enhance(2.0)
 
         return enhanced_pil
     except Exception as e:
-        st.warning(f"⚠️ Image enhancement failed: {str(e)}")
-        return img_pil  # fallback to original
+        st.warning(f"Image enhancement failed, using original: {str(e)}")
+        return img_pil
 
 def preprocess_image(img_pil):
     """
-    Resize, enhance, and normalize image for model input (224x224).
+    Prepare image for model prediction with normalization.
+    Args:
+        img_pil: PIL Image object
+    Returns:
+        numpy array: Preprocessed image array or None if failed
     """
     try:
-        # Step 1: Enhance image quality
         enhanced_img = enhance_image_quality(img_pil)
-
-        # Step 2: Resize and convert to array
         img = enhanced_img.resize((224, 224))
+        
+        # Convert to array and normalize
         img_array = image.img_to_array(img)
-
-        # Step 3: Normalize and add batch dimension
         img_array = np.expand_dims(img_array, axis=0)
+        
+        # Normalize to [0,1] range
         img_array = img_array / 255.0
-
+        
         return img_array
     except Exception as e:
-        st.error(f"❌ Image preprocessing failed: {str(e)}")
+        st.error(f"Image preprocessing failed: {str(e)}")
         return None
 
 def predict_image(img_path, model):
-    """Make prediction on uploaded image"""
+    """
+    Make cataract prediction on an image.
+    Args:
+        img_path: Path to image file
+        model: Loaded TensorFlow model
+    Returns:
+        tuple: (predicted_class, confidence) or (None, None) if failed
+    """
     try:
-        # Load original image
         img = Image.open(img_path)
-        
-        # Preprocess the image (includes enhancement)
         img_array = preprocess_image(img)
         
         if img_array is None:
             return None, None
 
-        # Make prediction
         predictions = model.predict(img_array)
-        predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
+        predicted_idx = np.argmax(predictions[0])
+        predicted_class = CLASS_NAMES[predicted_idx]
         confidence = np.max(predictions[0]) * 100
-
+        
         return predicted_class, confidence
+        
     except Exception as e:
-        st.error(f"Error during prediction: {str(e)}")
+        st.error(f"Prediction failed: {str(e)}")
         return None, None
 
 def save_detection(patient_id, result, confidence, attended_by, notes=""):
-    """Save detection results to database"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    """
+    Save detection results to database with validation.
+    Args:
+        patient_id: ID of patient
+        result: Detection result class
+        confidence: Prediction confidence (0-100)
+        attended_by: Staff member who performed detection
+        notes: Optional additional notes
+    Returns:
+        int: Detection ID if successful, None otherwise
+    """
+    conn = None
     try:
-        cursor.execute('''INSERT INTO detections (patient_id, result, confidence, attended_by, notes)
-                          VALUES (?, ?, ?, ?, ?)''',
-                          (patient_id, result, confidence, attended_by, notes))
+        # Validate inputs
+        if not all([patient_id, result, attended_by]):
+            raise ValueError("Missing required fields")
+            
+        if not 0 <= confidence <= 100:
+            raise ValueError("Confidence must be 0-100")
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO detections 
+            (patient_id, result, confidence, attended_by, notes)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            int(patient_id),
+            str(result),
+            float(confidence),
+            str(attended_by),
+            str(notes) if notes else None
+        ))
+        
         detection_id = cursor.lastrowid
         conn.commit()
         return detection_id
+        
+    except sqlite3.Error as e:
+        st.error(f"Database error saving detection: {str(e)}")
+        if conn:
+            conn.rollback()
+        return None
     except Exception as e:
         st.error(f"Error saving detection: {str(e)}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
-def get_detections():
-    """Get all detections with patient info"""
-    conn = sqlite3.connect(DB_NAME)
+def get_detections(limit=None, patient_id=None):
+    """
+    Get detection records with optional filtering.
+    Args:
+        limit: Maximum number of records to return
+        patient_id: Filter by specific patient
+    Returns:
+        DataFrame: Detection records with patient info
+    """
+    conn = None
     try:
-        df = pd.read_sql_query('''
-            SELECT d.*, p.full_name, p.gender, p.age 
+        query = '''
+            SELECT 
+                d.id, d.result, d.confidence, 
+                datetime(d.detection_date) as detection_date,
+                d.attended_by, d.notes,
+                p.full_name, p.gender, p.age
             FROM detections d
             JOIN patients p ON d.patient_id = p.id
-            ORDER BY d.detection_date DESC
-        ''', conn)
-        return df
+        '''
+        
+        params = []
+        if patient_id:
+            query += " WHERE d.patient_id = ?"
+            params.append(int(patient_id))
+            
+        query += " ORDER BY d.detection_date DESC"
+        
+        if limit:
+            query += " LIMIT ?"
+            params.append(int(limit))
+            
+        conn = sqlite3.connect(DB_NAME)
+        return pd.read_sql_query(query, conn, params=params)
+        
     except Exception as e:
         st.error(f"Error getting detections: {str(e)}")
         return pd.DataFrame()
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def get_detection_by_id(detection_id):
-    """Get a specific detection by ID"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    """
+    Get a specific detection record by ID.
+    Args:
+        detection_id: ID of detection record
+    Returns:
+        dict: Detection details or None if not found
+    """
+    conn = None
     try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
         cursor.execute('''
-            SELECT d.*, p.full_name 
+            SELECT 
+                d.*, 
+                p.full_name,
+                p.gender,
+                p.age
             FROM detections d
             JOIN patients p ON d.patient_id = p.id
             WHERE d.id = ?
-        ''', (detection_id,))
-        detection = cursor.fetchone()
-        return detection
+        ''', (int(detection_id),))
+        
+        row = cursor.fetchone()
+        if row:
+            columns = [col[0] for col in cursor.description]
+            return dict(zip(columns, row))
+        return None
+        
     except Exception as e:
-        st.error(f"Error getting detection by ID: {str(e)}")
+        st.error(f"Error getting detection: {str(e)}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
-def update_detection(detection_id, new_result, new_confidence, new_notes):
-    """Update an existing detection record"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+def update_detection(detection_id, new_result=None, new_confidence=None, new_notes=None):
+    """
+    Update detection record with new values.
+    Args:
+        detection_id: ID of detection to update
+        new_result: Updated result class (optional)
+        new_confidence: Updated confidence (optional)
+        new_notes: Updated notes (optional)
+    Returns:
+        bool: True if update successful, False otherwise
+    """
+    conn = None
     try:
-        cursor.execute('''
+        if not any([new_result, new_confidence, new_notes]):
+            raise ValueError("No update values provided")
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Build dynamic update query
+        updates = []
+        params = []
+        
+        if new_result is not None:
+            updates.append("result = ?")
+            params.append(str(new_result))
+            
+        if new_confidence is not None:
+            if not 0 <= new_confidence <= 100:
+                raise ValueError("Confidence must be 0-100")
+            updates.append("confidence = ?")
+            params.append(float(new_confidence))
+            
+        if new_notes is not None:
+            updates.append("notes = ?")
+            params.append(str(new_notes) if new_notes else None)
+        
+        params.append(int(detection_id))
+        
+        query = f'''
             UPDATE detections 
-            SET result = ?, confidence = ?, notes = ?
+            SET {', '.join(updates)}
             WHERE id = ?
-        ''', (new_result, new_confidence, new_notes, detection_id))
+        '''
+        
+        cursor.execute(query, params)
         conn.commit()
-        return True
+        
+        return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        st.error(f"Database error updating detection: {str(e)}")
+        if conn:
+            conn.rollback()
+        return False
     except Exception as e:
         st.error(f"Error updating detection: {str(e)}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def delete_detection(detection_id):
-    """Delete a detection record"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    """
+    Delete a detection record.
+    Args:
+        detection_id: ID of detection to delete
+    Returns:
+        bool: True if deletion successful, False otherwise
+    """
+    conn = None
     try:
-        cursor.execute('DELETE FROM detections WHERE id = ?', (detection_id,))
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            DELETE FROM detections 
+            WHERE id = ?
+        ''', (int(detection_id),))
+        
         conn.commit()
-        return True
+        return cursor.rowcount > 0
+        
+    except sqlite3.Error as e:
+        st.error(f"Database error deleting detection: {str(e)}")
+        if conn:
+            conn.rollback()
+        return False
     except Exception as e:
         st.error(f"Error deleting detection: {str(e)}")
         return False
     finally:
-        conn.close()
-
+        if conn:
+            conn.close()
+        
 # -------------------------------
 # 📅 Appointment Functions 
 # -------------------------------
 def add_appointment(patient_id, patient_name, gender, age, village, traditional_authority, 
                     district, marital_status, appointment_date, appointment_time, booked_by, 
                     doctor_email, notes="", status="Pending"):
-    """Add new appointment"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    """Add new appointment with full patient details and validation"""
+    conn = None
     try:
+        # Validate required fields
+        if not all([patient_id, patient_name, appointment_date, appointment_time, doctor_email]):
+            st.error("Missing required appointment fields")
+            return None
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Check if doctor exists
+        if not get_doctor_by_email(doctor_email):
+            st.error("Specified doctor not found")
+            return None
+
         cursor.execute('''
             INSERT INTO appointments (
                 patient_id, patient_name, gender, age, village, traditional_authority,
@@ -836,59 +1024,450 @@ def add_appointment(patient_id, patient_name, gender, age, village, traditional_
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             patient_id, patient_name, gender, age, village, traditional_authority,
-            district, marital_status, appointment_date, appointment_time, booked_by,
-            doctor_email, notes, status
+            district, marital_status, appointment_date, appointment_time.strftime("%H:%M") if isinstance(appointment_time, time) else appointment_time, 
+            booked_by, doctor_email.lower(), notes, status
         ))
+        
         appointment_id = cursor.lastrowid
         conn.commit()
+        st.success(f"Appointment {appointment_id} created successfully")
         return appointment_id
+    except sqlite3.IntegrityError as e:
+        st.error(f"Database integrity error: {str(e)}")
+        return None
     except Exception as e:
-        st.error(f"Error adding appointment: {str(e)}")
+        st.error(f"Unexpected error adding appointment: {str(e)}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
-def get_appointments():
-    """Get all appointments"""
-    conn = sqlite3.connect(DB_NAME)
+def get_appointments(status_filter=None, doctor_filter=None, date_range=None):
+    """Get appointments with optional filtering"""
+    conn = None
     try:
-        df = pd.read_sql_query('''
-            SELECT * FROM appointments 
-            ORDER BY appointment_date DESC, appointment_time DESC
-        ''', conn)
+        base_query = '''
+            SELECT a.*, p.registration_date as patient_reg_date 
+            FROM appointments a
+            LEFT JOIN patients p ON a.patient_id = p.id
+        '''
+        conditions = []
+        params = []
+        
+        if status_filter:
+            conditions.append("a.status = ?")
+            params.append(status_filter)
+        if doctor_filter:
+            conditions.append("a.doctor_email = ?")
+            params.append(doctor_filter.lower())
+        if date_range:
+            start_date, end_date = date_range
+            conditions.append("a.appointment_date BETWEEN ? AND ?")
+            params.extend([start_date, end_date])
+        
+        if conditions:
+            base_query += " WHERE " + " AND ".join(conditions)
+        
+        base_query += " ORDER BY a.appointment_date DESC, a.appointment_time DESC"
+        
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(base_query, conn, params=params if params else None)
         return df
     except Exception as e:
-        st.error(f"Error getting appointments: {str(e)}")
+        st.error(f"Error retrieving appointments: {str(e)}")
         return pd.DataFrame()
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
-def get_doctors():
-    """Get all approved doctors"""
-    conn = sqlite3.connect(DB_NAME)
+def get_doctor_appointments(doctor_email, upcoming_only=True):
+    """Get appointments for a specific doctor with enhanced filtering"""
+    conn = None
     try:
-        df = pd.read_sql_query("SELECT * FROM users WHERE role = 'doctor' AND status = 'approved'", conn)
+        if not doctor_email:
+            st.error("Doctor email required")
+            return pd.DataFrame()
+
+        query = '''
+            SELECT * FROM appointments 
+            WHERE doctor_email = ?
+        '''
+        params = [doctor_email.lower()]
+        
+        if upcoming_only:
+            query += " AND appointment_date >= date('now')"
+        
+        query += " ORDER BY appointment_date ASC, appointment_time ASC"  # Chronological order for doctors
+        
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(query, conn, params=params)
+        return df
+    except Exception as e:
+        st.error(f"Error getting doctor appointments: {str(e)}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
+
+def update_appointment_status(appointment_id, status, doctor_email=None):
+    """Update appointment status with comprehensive validation"""
+    conn = None
+    try:
+        if not get_appointment_by_id(appointment_id):
+            st.error(f"Appointment {appointment_id} not found")
+            return False
+
+        valid_statuses = ["Pending", "Confirmed", "Completed", "Cancelled"]
+        if status not in valid_statuses:
+            st.error(f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+            return False
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        if doctor_email:
+            if not get_doctor_by_email(doctor_email):
+                st.error("Specified doctor not found")
+                return False
+                
+            cursor.execute('''
+                UPDATE appointments 
+                SET status = ?,
+                    doctor_email = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (status, doctor_email.lower(), appointment_id))
+        else:
+            cursor.execute('''
+                UPDATE appointments 
+                SET status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (status, appointment_id))
+        
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            st.warning("No appointments were updated")
+            return False
+            
+        return True
+    except Exception as e:
+        st.error(f"Error updating appointment status: {str(e)}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def reschedule_appointment(appointment_id, new_date, new_time, new_doctor_email=None):
+    """Reschedule an appointment with full validation"""
+    conn = None
+    try:
+        appointment = get_appointment_by_id(appointment_id)
+        if not appointment:
+            st.error(f"Appointment {appointment_id} not found")
+            return False
+
+        # Validate new date is not in the past
+        if new_date < date.today():
+            st.error("Cannot schedule appointments in the past")
+            return False
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        update_data = {
+            'appointment_date': new_date,
+            'appointment_time': new_time.strftime("%H:%M") if isinstance(new_time, time) else new_time,
+            'status': 'Pending',  # Reset status when rescheduling
+            'updated_at': datetime.now()
+        }
+        
+        if new_doctor_email:
+            if not get_doctor_by_email(new_doctor_email):
+                st.error("Specified doctor not found")
+                return False
+            update_data['doctor_email'] = new_doctor_email.lower()
+
+        set_clause = ", ".join(f"{k} = ?" for k in update_data.keys())
+        params = list(update_data.values()) + [appointment_id]
+        
+        cursor.execute(f'''
+            UPDATE appointments 
+            SET {set_clause}
+            WHERE id = ?
+        ''', params)
+        
+        conn.commit()
+        
+        if cursor.rowcount == 0:
+            st.warning("No appointments were rescheduled")
+            return False
+            
+        st.success(f"Appointment {appointment_id} rescheduled successfully")
+        return True
+    except Exception as e:
+        st.error(f"Error rescheduling appointment: {str(e)}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def get_doctors(include_inactive=False):
+    """Get doctors with optional inactive ones"""
+    conn = None
+    try:
+        query = '''
+            SELECT id, full_name, email, status
+            FROM users 
+            WHERE role = 'doctor'
+        '''
+        
+        if not include_inactive:
+            query += " AND status = 'approved'"
+            
+        query += " ORDER BY full_name"
+        
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(query, conn)
         return df
     except Exception as e:
         st.error(f"Error getting doctors: {str(e)}")
         return pd.DataFrame()
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
-def get_doctor_by_email(email):
-    """Get doctor details by email"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+def get_doctor_by_email(email, return_dict=False):
+    """Get doctor details by email with enhanced return options"""
+    conn = None
     try:
-        cursor.execute('SELECT * FROM users WHERE email = ? AND role = "doctor"', (email.lower(),))
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, full_name, email, status
+            FROM users 
+            WHERE email = ? AND role = 'doctor'
+        ''', (email.lower(),))
+        
         doctor = cursor.fetchone()
+        
+        if not doctor:
+            return None
+            
+        if return_dict:
+            columns = [col[0] for col in cursor.description]
+            return dict(zip(columns, doctor))
         return doctor
     except Exception as e:
         st.error(f"Error getting doctor by email: {str(e)}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
+def get_patient_appointments(patient_id, include_past=False):
+    """Get appointments for a patient with date filtering"""
+    conn = None
+    try:
+        query = '''
+            SELECT a.*, d.full_name as doctor_name
+            FROM appointments a
+            LEFT JOIN users d ON a.doctor_email = d.email
+            WHERE a.patient_id = ?
+        '''
+        
+        params = [patient_id]
+        
+        if not include_past:
+            query += " AND a.appointment_date >= date('now')"
+        
+        query += " ORDER BY a.appointment_date DESC, a.appointment_time DESC"
+        
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(query, conn, params=params)
+        return df
+    except Exception as e:
+        st.error(f"Error getting patient appointments: {str(e)}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
+
+def delete_appointment(appointment_id):
+    """Delete appointment with confirmation and logging"""
+    conn = None
+    try:
+        appointment = get_appointment_by_id(appointment_id, detailed=True)
+        if not appointment:
+            st.error(f"Appointment {appointment_id} not found")
+            return False
+
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # First archive the appointment to deleted_appointments table
+        cursor.execute('''
+            INSERT INTO deleted_appointments (
+                id, patient_id, patient_name, gender, age, village, traditional_authority,
+                district, marital_status, appointment_date, appointment_time, booked_by,
+                doctor_email, notes, status, created_at, deleted_by
+            )
+            SELECT 
+                id, patient_id, patient_name, gender, age, village, traditional_authority,
+                district, marital_status, appointment_date, appointment_time, booked_by,
+                doctor_email, notes, status, created_at, ?
+            FROM appointments 
+            WHERE id = ?
+        ''', (st.session_state.user_email, appointment_id))
+        
+        # Then delete from active appointments
+        cursor.execute('DELETE FROM appointments WHERE id = ?', (appointment_id,))
+        
+        conn.commit()
+        
+        if cursor.rowcount > 0:
+            st.success(f"Appointment {appointment_id} deleted successfully")
+            return True
+        else:
+            st.warning("No appointments were deleted")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error deleting appointment: {str(e)}")
+        if conn:
+            conn.rollback()
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def get_appointment_by_id(appointment_id, detailed=False):
+    """Get appointment by ID with detailed option"""
+    conn = None
+    try:
+        query = '''
+            SELECT a.*, p.registration_date as patient_reg_date
+            FROM appointments a
+            LEFT JOIN patients p ON a.patient_id = p.id
+            WHERE a.id = ?
+        ''' if detailed else 'SELECT * FROM appointments WHERE id = ?'
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute(query, (appointment_id,))
+        
+        result = cursor.fetchone()
+        if not result:
+            return None
+            
+        if detailed:
+            columns = [col[0] for col in cursor.description]
+            return dict(zip(columns, result))
+        return result
+    except Exception as e:
+        st.error(f"Error getting appointment: {str(e)}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+def get_upcoming_appointments(days=7, doctor_email=None):
+    """Get upcoming appointments with doctor filtering"""
+    conn = None
+    try:
+        query = '''
+            SELECT a.*, p.full_name as patient_name, u.full_name as doctor_name
+            FROM appointments a
+            JOIN patients p ON a.patient_id = p.id
+            JOIN users u ON a.doctor_email = u.email
+            WHERE a.appointment_date BETWEEN date('now') AND date('now', ?)
+        '''
+        
+        params = [f'+{days} days']
+        
+        if doctor_email:
+            query += " AND a.doctor_email = ?"
+            params.append(doctor_email.lower())
+        
+        query += " ORDER BY a.appointment_date, a.appointment_time"
+        
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query(query, conn, params=params)
+        return df
+    except Exception as e:
+        st.error(f"Error getting upcoming appointments: {str(e)}")
+        return pd.DataFrame()
+    finally:
+        if conn:
+            conn.close()
+
+def get_appointment_stats(time_period='30 days'):
+    """Get comprehensive appointment statistics"""
+    conn = None
+    try:
+        stats = {}
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Basic counts
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM appointments
+            WHERE appointment_date >= date('now', ?)
+        ''', (f'-{time_period}',))
+        
+        counts = cursor.fetchone()
+        stats['total'] = counts[0]
+        stats['completed'] = counts[1]
+        stats['pending'] = counts[2]
+        stats['cancelled'] = counts[3]
+        
+        # Status distribution
+        cursor.execute('''
+            SELECT status, COUNT(*) as count
+            FROM appointments
+            WHERE appointment_date >= date('now', ?)
+            GROUP BY status
+        ''', (f'-{time_period}',))
+        stats['status_distribution'] = dict(cursor.fetchall())
+        
+        # Doctor workload
+        cursor.execute('''
+            SELECT u.full_name, COUNT(*) as appointment_count
+            FROM appointments a
+            JOIN users u ON a.doctor_email = u.email
+            WHERE a.appointment_date >= date('now', ?)
+            GROUP BY u.full_name
+            ORDER BY appointment_count DESC
+        ''', (f'-{time_period}',))
+        stats['doctor_workload'] = cursor.fetchall()
+        
+        # Daily trend
+        daily_trend = pd.read_sql_query('''
+            SELECT date(appointment_date) as day, 
+                   COUNT(*) as count,
+                   SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed
+            FROM appointments
+            WHERE appointment_date >= date('now', ?)
+            GROUP BY day
+            ORDER BY day
+        ''', conn, params=(f'-{time_period}',))
+        stats['daily_trend'] = daily_trend
+        
+        return stats
+    except Exception as e:
+        st.error(f"Error getting appointment stats: {str(e)}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+        
 # -------------------------------
 # 📧 Messaging Functions
 # -------------------------------
@@ -1459,7 +2038,7 @@ def show_detection_page():
         - **Path:** `{model_info['path']}`
         - **Accuracy:** {model_info.get('metrics', {}).get('accuracy', 'N/A')}
         """)
-
+    
     # Tab interface for different functions
     tab1, tab2 = st.tabs(["New Detection", "Manage Detections"])
     
@@ -1469,25 +2048,25 @@ def show_detection_page():
     with tab2:
         _show_manage_detections_interface()
 
-
 def _show_new_detection_interface():
     """Show interface for new cataract detection"""
+    # Backward-compatible camera toggle
     use_camera = st.checkbox("🎥 Use Camera", value=False)
-
+    
+    # Step 1: Select or register patient
     st.markdown('<div class="section-title">Patient Information</div>', unsafe_allow_html=True)
+    
     patient_id = _get_or_register_patient()
-
+    
+    # Step 2: Image capture/upload and prediction
     if patient_id:
         _process_eye_image(patient_id, use_camera)
-    else:
-        st.warning("Please select or register a patient first")
-
 
 def _get_or_register_patient():
     """Handle patient selection or registration"""
     subtab1, subtab2 = st.tabs(["Existing Patient", "New Patient"])
     patient_id = None
-
+    
     with subtab1:
         patients = get_patients()
         if patients.empty:
@@ -1497,9 +2076,13 @@ def _get_or_register_patient():
                 lambda x: f"{x['full_name']} | {x['village']} | {x['district']} | Age: {x['age']}", 
                 axis=1
             )
-            selected_patient = st.selectbox("Select Patient", options=patient_options, key="patient_select")
+            selected_patient = st.selectbox(
+                "Select Patient", 
+                options=patient_options,
+                key="patient_select"
+            )
             patient_id = patients.iloc[patient_options.tolist().index(selected_patient)]['id']
-
+    
     with subtab2:
         st.markdown("### Register New Patient")
         with st.form("patient_form", clear_on_submit=True):
@@ -1509,10 +2092,18 @@ def _get_or_register_patient():
                 age = st.number_input("Age*", min_value=0, max_value=120, key="patient_age")
                 village = st.text_input("Village*", key="patient_village")
             with cols[1]:
-                gender = st.selectbox("Gender*", options=["Male", "Female", "Other"], key="patient_gender")
+                gender = st.selectbox(
+                    "Gender*", 
+                    options=["Male", "Female", "Other"], 
+                    key="patient_gender"
+                )
                 district = st.text_input("District*", key="patient_district")
-                marital_status = st.selectbox("Marital Status", options=["Single", "Married", "Divorced", "Widowed"], key="patient_marital")
-
+                marital_status = st.selectbox(
+                    "Marital Status", 
+                    options=["Single", "Married", "Divorced", "Widowed"],
+                    key="patient_marital"
+                )
+            
             if st.form_submit_button("Register Patient"):
                 if not all([full_name, age, village, gender, district]):
                     st.error("Please fill all required fields (*)")
@@ -1522,7 +2113,7 @@ def _get_or_register_patient():
                         gender=gender,
                         age=age,
                         village=village,
-                        traditional_authority="",  # Optional
+                        traditional_authority="",  # Optional field
                         district=district,
                         marital_status=marital_status
                     )
@@ -1530,38 +2121,53 @@ def _get_or_register_patient():
                         st.success(f"Patient {full_name} registered successfully!")
                         st.session_state.patient_id = patient_id
                         st.rerun()
-
+    
     return patient_id or st.session_state.get('patient_id')
-
 
 def _process_eye_image(patient_id, use_camera):
     """Handle image capture/upload and prediction"""
     st.markdown('<div class="section-title">Capture Eye Image</div>', unsafe_allow_html=True)
     
-    img = st.camera_input("Take an eye photo") if use_camera else st.file_uploader("Or upload an eye image...", type=["jpg", "jpeg", "png"])
-
+    img = None
+    if use_camera:
+        img = st.camera_input("Take an eye photo", key="camera_input")
+    else:
+        img = st.file_uploader(
+            "Or upload an eye image...", 
+            type=["jpg", "jpeg", "png"],
+            key="image_uploader"
+        )
+    
     if img is not None:
+        # Display the captured/uploaded image
         st.image(img, caption="Eye Image for Analysis", use_column_width=True)
-
+        
+        # Save to temp file for prediction
         temp_file = f"temp_eye_{patient_id}_{datetime.now().timestamp()}.jpg"
         try:
             with open(temp_file, "wb") as f:
                 f.write(img.getbuffer() if use_camera else img.getvalue())
-
+            
+            # Load model and predict
             model = load_detection_model()
-            if model and st.button("Analyze Image"):
+            if model and st.button("Analyze Image", key="analyze_btn"):
                 with st.spinner("Analyzing image..."):
                     predicted_class, confidence = predict_image(temp_file, model)
-
+                    
                     if predicted_class:
-                        _display_prediction_results(patient_id, predicted_class, confidence)
+                        _display_prediction_results(
+                            patient_id=patient_id,
+                            predicted_class=predicted_class,
+                            confidence=confidence
+                        )
         finally:
+            # Clean up temp file
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
-
 def _display_prediction_results(patient_id, predicted_class, confidence):
     """Display and save prediction results"""
+    # Display results in a styled card
     st.markdown(f'''
     <div class="feature-card">
         <h3>Analysis Results</h3>
@@ -1569,46 +2175,95 @@ def _display_prediction_results(patient_id, predicted_class, confidence):
         <p><strong>Confidence:</strong> {confidence:.2f}%</p>
     </div>
     ''', unsafe_allow_html=True)
-
+    
+    # Step 3: Save results
     st.markdown('<div class="section-title">Save Results</div>', unsafe_allow_html=True)
-    notes = st.text_area("Additional Notes")
-
-    if st.button("Save Detection Results"):
-        detection_id = save_detection(
-            patient_id=patient_id,
-            result=predicted_class,
-            confidence=confidence,
-            attended_by=st.session_state.user_name,
-            notes=notes
+    
+    with st.form("save_results_form"):
+        notes = st.text_area(
+            "Additional Notes",
+            placeholder="Enter any additional observations...",
+            key="detection_notes"
         )
-
-        if detection_id:
-            st.success("Detection results saved successfully!")
-            st.rerun()
-        else:
-            st.error("Failed to save detection results")
-
+        
+        if st.form_submit_button("Save Detection Results"):
+            detection_id = save_detection(
+                patient_id=patient_id,
+                result=predicted_class,
+                confidence=confidence,
+                attended_by=st.session_state.user_name,
+                notes=notes
+            )
+            
+            if detection_id:
+                st.success("Detection results saved successfully!")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Failed to save detection results")
 
 def _show_manage_detections_interface():
-    """Interface to manage past detection results"""
+    """Show interface for managing existing detections"""
     st.markdown('<div class="section-title">Manage Detection Results</div>', unsafe_allow_html=True)
-
+    
+    # Add filters
+    col1, col2 = st.columns(2)
+    with col1:
+        patient_filter = st.text_input("Filter by Patient Name", key="patient_filter")
+    with col2:
+        result_filter = st.multiselect(
+            "Filter by Result",
+            options=CLASS_NAMES,
+            default=CLASS_NAMES,
+            key="result_filter"
+        )
+    
+    # Get filtered detections
     detections = get_detections()
     if not detections.empty:
+        if patient_filter:
+            detections = detections[detections['full_name'].str.contains(patient_filter, case=False)]
+        if result_filter:
+            detections = detections[detections['result'].isin(result_filter)]
+    
+    if not detections.empty:
+        # Configure editable grid
         gb = GridOptionsBuilder.from_dataframe(detections)
-        gb.configure_default_column(editable=False, filterable=True, sortable=True)
-        gb.configure_column("full_name", header_name="Patient Name")
-        gb.configure_column("gender", header_name="Gender")
-        gb.configure_column("age", header_name="Age")
-        gb.configure_column("result", header_name="Result", editable=True)
-        gb.configure_column("confidence", header_name="Confidence", type=["numericColumn"], editable=True)
-        gb.configure_column("notes", header_name="Notes", editable=True)
-        gb.configure_column("detection_date", header_name="Date")
-
-        gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-        gb.configure_grid_options(enableRangeSelection=True)
+        gb.configure_default_column(
+            editable=False,
+            filterable=True,
+            sortable=True,
+            resizable=True
+        )
+        
+        # Configure editable columns
+        gb.configure_column("result", 
+                           header_name="Result", 
+                           editable=True,
+                           cellEditor='agSelectCellEditor',
+                           cellEditorParams={'values': CLASS_NAMES})
+        
+        gb.configure_column("confidence", 
+                           header_name="Confidence", 
+                           type=["numericColumn"],
+                           editable=True,
+                           valueFormatter="value.toFixed(2) + '%'")
+        
+        gb.configure_column("notes", 
+                           header_name="Notes", 
+                           editable=True)
+        
+        # Configure selection
+        gb.configure_selection(
+            selection_mode="multiple",
+            use_checkbox=True,
+            rowMultiSelectWithClick=True,
+            suppressRowDeselection=False
+        )
+        
         grid_options = gb.build()
-
+        
+        # Display the grid
         grid_response = AgGrid(
             detections,
             gridOptions=grid_options,
@@ -1617,324 +2272,631 @@ def _show_manage_detections_interface():
             data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
             update_mode=GridUpdateMode.MODEL_CHANGED,
             fit_columns_on_grid_load=True,
+            theme='streamlit',
             allow_unsafe_jscode=True,
-            theme='streamlit'
+            key="detections_grid"
         )
-
-        selected_rows = grid_response['selected_rows']
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("💾 Save All Changes"):
-                updated_data = grid_response['data']
-                success_count = 0
-                for _, row in updated_data.iterrows():
-                    if update_detection(row['id'], row['result'], row['confidence'], row['notes']):
-                        success_count += 1
-                st.success(f"Updated {success_count}/{len(updated_data)} records")
-                st.rerun()
-
-        with col2:
-            if st.button("🔄 Refresh Data"):
-                st.rerun()
-
-        with col3:
-            if selected_rows and st.button("🗑️ Delete Selected", type="secondary"):
-                success_count = 0
-                for row in selected_rows:
-                    if delete_detection(row['id']):
-                        success_count += 1
-                st.success(f"Deleted {success_count}/{len(selected_rows)} records")
-                st.rerun()
-
-        if selected_rows and len(selected_rows) == 1:
-            st.markdown("---")
-            st.markdown("### Detailed View")
-            record = selected_rows[0]
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Patient:** {record['full_name']}")
-                st.markdown(f"**Gender:** {record['gender']}")
-                st.markdown(f"**Age:** {record['age']}")
-            with col2:
-                st.markdown(f"**Result:** {record['result']}")
-                st.markdown(f"**Confidence:** {record['confidence']:.2f}%")
-                st.markdown(f"**Date:** {record['detection_date']}")
-
-            st.markdown("**Notes:**")
-            st.write(record['notes'])
-
-            st.markdown("### Patient History")
-            conn = sqlite3.connect(DB_NAME)
-            try:
-                patient_history = pd.read_sql_query('''
-                    SELECT * FROM detections 
-                    WHERE patient_id = ?
-                    ORDER BY detection_date DESC
-                ''', conn, params=(record['patient_id'],))
-
-                if not patient_history.empty:
-                    st.dataframe(patient_history[['detection_date', 'result', 'confidence', 'notes']])
-                else:
-                    st.info("No additional records for this patient")
-            except Exception as e:
-                st.error(f"Error loading patient history: {str(e)}")
-            finally:
-                conn.close()
+        
+        # Handle grid actions
+        _handle_grid_actions(grid_response, detections)
     else:
-        st.info("No detection records found")
+        st.info("No detection records found matching filters")
+
+def _handle_grid_actions(grid_response, original_data):
+    """Handle actions on the detections grid with proper database updates"""
+    selected_rows = grid_response.get('selected_rows', [])
+    updated_data = grid_response.get('data', pd.DataFrame())
+    
+    # Action buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("💾 Save Changes", key="save_changes"):
+            if not updated_data.empty:
+                success_count = 0
+                failed_count = 0
+                
+                # Create a progress bar
+                progress_bar = st.progress(0)
+                total_rows = len(updated_data)
+                
+                for i, (_, row) in enumerate(updated_data.iterrows()):
+                    try:
+                        # Find the original row to compare changes
+                        original_row = original_data[original_data['id'] == row['id']].iloc[0]
+                        
+                        # Check if any editable fields were changed
+                        changes = {}
+                        if row['result'] != original_row['result']:
+                            changes['new_result'] = row['result']
+                        if row['confidence'] != original_row['confidence']:
+                            changes['new_confidence'] = row['confidence']
+                        if row['notes'] != original_row['notes']:
+                            changes['new_notes'] = row['notes']
+                        
+                        # Only update if there are changes
+                        if changes:
+                            if update_detection(
+                                detection_id=row['id'],
+                                new_result=changes.get('new_result'),
+                                new_confidence=changes.get('new_confidence'),
+                                new_notes=changes.get('new_notes')
+                            ):
+                                success_count += 1
+                            else:
+                                failed_count += 1
+                    
+                    except Exception as e:
+                        st.error(f"Error updating record ID {row['id']}: {str(e)}")
+                        failed_count += 1
+                    
+                    # Update progress bar
+                    progress_bar.progress((i + 1) / total_rows)
+                
+                # Show results
+                if success_count > 0:
+                    st.success(f"Successfully updated {success_count} records")
+                if failed_count > 0:
+                    st.error(f"Failed to update {failed_count} records")
+                
+                # Rerun to refresh the data
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.warning("No data to save")
+    
+    with col2:
+        if st.button("🔄 Refresh Data", key="refresh_data"):
+            st.rerun()
+    
+    with col3:
+        if selected_rows and st.button("🗑️ Delete Selected", type="secondary", key="delete_selected"):
+            with st.expander("⚠️ Confirm Deletion", expanded=True):
+                st.warning(f"You are about to delete {len(selected_rows)} records. This action cannot be undone!")
+                
+                # Show summary of selected records
+                for i, row in enumerate(selected_rows[:5]):  # Show first 5 as sample
+                    st.write(f"{i+1}. {row['full_name']} - {row['result']} ({row['confidence']}%)")
+                if len(selected_rows) > 5:
+                    st.write(f"...and {len(selected_rows)-5} more")
+                
+                # Double confirmation
+                if st.checkbox("I understand this will permanently delete the selected records", key="confirm_delete_check"):
+                    if st.button("✅ CONFIRM DELETE", type="primary", key="final_confirm_delete"):
+                        success_count = 0
+                        failed_count = 0
+                        progress_bar = st.progress(0)
+                        
+                        for i, row in enumerate(selected_rows):
+                            try:
+                                if delete_detection(row['id']):
+                                    success_count += 1
+                                else:
+                                    failed_count += 1
+                            except Exception as e:
+                                st.error(f"Error deleting record ID {row['id']}: {str(e)}")
+                                failed_count += 1
+                            
+                            progress_bar.progress((i + 1) / len(selected_rows))
+                        
+                        if success_count > 0:
+                            st.success(f"Successfully deleted {success_count} records")
+                        if failed_count > 0:
+                            st.error(f"Failed to delete {failed_count} records")
+                        
+                        time.sleep(1)
+                        st.rerun()
+    
+    # Show detailed view for single selection
+    if len(selected_rows) == 1:
+        _show_detection_details(selected_rows[0])
+      
+def _show_detection_details(detection):
+    """Show detailed view of a single detection"""
+    st.markdown("---")
+    st.markdown("### Detailed View")
+    
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown(f"**Patient:** {detection['full_name']}")
+        st.markdown(f"**Gender:** {detection['gender']}")
+        st.markdown(f"**Age:** {detection['age']}")
+    with cols[1]:
+        st.markdown(f"**Result:** {detection['result']}")
+        st.markdown(f"**Confidence:** {detection['confidence']:.2f}%")
+        st.markdown(f"**Date:** {detection['detection_date']}")
+    
+    st.markdown("**Notes:**")
+    st.write(detection['notes'])
+    
+    # Show patient history
+    st.markdown("### Patient History")
+    try:
+        history = get_detections(patient_id=detection['patient_id'])
+        if not history.empty:
+            st.dataframe(
+                history[['detection_date', 'result', 'confidence', 'attended_by']],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No additional records for this patient")
+    except Exception as e:
+        st.error(f"Error loading patient history: {str(e)}")
 
 # -------------------------------
 # 📅 Appointments Page 
 # -------------------------------
 def show_appointments_page():
-    """Show appointments management interface with direct doctor selection"""
-    st.markdown('<h1 class="section-title">📅 Appointments</h1>', unsafe_allow_html=True)
+    """Main appointments page with role-based views"""
+    st.markdown('<h1 class="section-title">📅 Appointments Management</h1>', unsafe_allow_html=True)
     
-    # Tab interface for different functions
-    tab1, tab2 = st.tabs(["New Appointment", "Manage Appointments"])
+    # Role-based view selection
+    if st.session_state.user_role == 'doctor':
+        display_doctor_appointments()
+    else:
+        display_admin_appointments()
+
+def display_doctor_appointments():
+    """View for doctors to manage their appointments with enhanced features"""
+    st.markdown('<div class="section-title">My Appointments</div>', unsafe_allow_html=True)
+    
+    # Get doctor's upcoming appointments
+    appointments = get_doctor_appointments(st.session_state.user_email, upcoming_only=True)
+    
+    if not appointments.empty:
+        # Enhanced filtering
+        col1, col2 = st.columns(2)
+        with col1:
+            status_options = ["All", "Pending", "Confirmed", "Completed", "Cancelled"]
+            selected_status = st.selectbox("Filter by status:", status_options)
+        with col2:
+            date_options = ["All", "Today", "Tomorrow", "This Week", "Next 7 Days", "Next 30 Days"]
+            selected_date = st.selectbox("Filter by date:", date_options)
+        
+        # Apply filters
+        if selected_status != "All":
+            appointments = appointments[appointments['status'] == selected_status]
+        
+        today = date.today()
+        if selected_date != "All":
+            if selected_date == "Today":
+                appointments = appointments[appointments['appointment_date'] == today]
+            elif selected_date == "Tomorrow":
+                tomorrow = today + timedelta(days=1)
+                appointments = appointments[appointments['appointment_date'] == tomorrow]
+            elif selected_date == "This Week":
+                start_date = today - timedelta(days=today.weekday())
+                end_date = start_date + timedelta(days=6)
+                appointments = appointments[
+                    (appointments['appointment_date'] >= start_date) & 
+                    (appointments['appointment_date'] <= end_date)
+                ]
+            elif selected_date == "Next 7 Days":
+                end_date = today + timedelta(days=7)
+                appointments = appointments[
+                    (appointments['appointment_date'] >= today) & 
+                    (appointments['appointment_date'] <= end_date)
+                ]
+            elif selected_date == "Next 30 Days":
+                end_date = today + timedelta(days=30)
+                appointments = appointments[
+                    (appointments['appointment_date'] >= today) & 
+                    (appointments['appointment_date'] <= end_date)
+                ]
+        
+        # Display appointments with enhanced cards
+        for _, appt in appointments.iterrows():
+            with st.container():
+                card = st.container()
+                with card:
+                    cols = st.columns([4, 1])
+                    with cols[0]:
+                        # Enhanced appointment card
+                        st.markdown(f"""
+                        **Patient:** {appt['patient_name']}  
+                        **Age/Gender:** {appt['age']}/{appt['gender']}  
+                        **Location:** {appt['village']}, {appt['district']}  
+                        **Date/Time:** {appt['appointment_date']} {appt['appointment_time']}  
+                        **Status:** <span class="status-{appt['status'].lower()}">{appt['status']}</span>  
+                        **Notes:** {appt['notes']}
+                        """, unsafe_allow_html=True)
+                    
+                    with cols[1]:
+                        # Doctor actions
+                        if appt['status'] == 'Pending':
+                            if st.button("✅ Accept", key=f"accept_{appt['id']}"):
+                                if update_appointment_status(appt['id'], 'Confirmed', st.session_state.user_email):
+                                    st.success("Appointment confirmed!")
+                                    time.sleep(1)
+                                    st.rerun()
+                            
+                            if st.button("🔄 Reschedule", key=f"reschedule_{appt['id']}"):
+                                show_reschedule_form(appt['id'])
+                            
+                            if st.button("❌ Decline", key=f"decline_{appt['id']}"):
+                                if update_appointment_status(appt['id'], 'Cancelled'):
+                                    st.success("Appointment declined")
+                                    time.sleep(1)
+                                    st.rerun()
+                        
+                        elif appt['status'] == 'Confirmed':
+                            if st.button("✔️ Mark Complete", key=f"complete_{appt['id']}"):
+                                if update_appointment_status(appt['id'], 'Completed'):
+                                    st.success("Appointment marked complete!")
+                                    time.sleep(1)
+                                    st.rerun()
+                    
+                    # Add some visual separation
+                    st.markdown("---")
+    else:
+        st.info("No upcoming appointments scheduled for you")
+
+def display_admin_appointments():
+    """Enhanced admin view for managing all appointments"""
+    tab1, tab2, tab3 = st.tabs(["📝 New Appointment", "🛠️ Manage Appointments", "📊 Reports"])
     
     with tab1:
-        st.markdown('<div class="section-title">Book New Appointment</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Schedule New Appointment</div>', unsafe_allow_html=True)
         
-        # Get patients for selection
+        # Enhanced patient selection with search
         patients = get_patients()
         if patients.empty:
             st.warning("No patients available. Please register patients first.")
         else:
-            patient_options = patients['full_name'] + " | " + patients['village']
-            selected_patient = st.selectbox("Select Patient", options=patient_options)
+            patient_options = patients['full_name'] + " | " + patients['village'] + " | " + patients['district']
+            selected_patient = st.selectbox(
+                "Select Patient:", 
+                options=patient_options,
+                help="Search for patient by name or location"
+            )
             patient_id = patients.iloc[patient_options.tolist().index(selected_patient)]['id']
             patient_data = patients[patients['id'] == patient_id].iloc[0]
             
-            # Get available doctors with direct selection
+            # Enhanced doctor selection with availability indicators
             doctors = get_doctors()
             if doctors.empty:
                 st.warning("No doctors available. Please have an admin register doctors.")
             else:
-                # Enhanced doctor selection with search and details
-                st.markdown("### Select Doctor")
-                doctor_col1, doctor_col2 = st.columns([2, 1])
+                # Show doctor workload
+                doctor_stats = get_appointment_stats(time_period='7 days')['doctor_workload']
+                workload_map = {doc[0]: doc[1] for doc in doctor_stats}
                 
-                with doctor_col1:
-                    doctor_options = doctors['full_name'] + " (" + doctors['email'] + ")"
-                    selected_doctor = st.selectbox(
-                        "Choose Doctor",
-                        options=doctor_options,
-                        index=0,
-                        key="doctor_select"
-                    )
-                    doctor_email = doctors.iloc[doctor_options.tolist().index(selected_doctor)]['email']
-                    doctor_data = doctors[doctors['email'] == doctor_email].iloc[0]
+                doctor_options = [
+                    f"{doc['full_name']} ({doc['email']}) | 🏥 {workload_map.get(doc['full_name'], 0)} appts this week"
+                    for _, doc in doctors.iterrows()
+                ]
                 
-                with doctor_col2:
-                    st.markdown("**Selected Doctor**")
-                    st.markdown(f"👨‍⚕️ {doctor_data['full_name']}")
-                    st.markdown(f"📧 {doctor_data['email']}")
+                selected_doctor = st.selectbox(
+                    "Select Doctor:", 
+                    options=doctor_options,
+                    help="Doctor availability based on recent appointments"
+                )
+                doctor_email = doctors.iloc[doctor_options.index(selected_doctor)]['email']
                 
-                # Appointment details
-                st.markdown("### Appointment Details")
+                # Appointment details with validation
                 col1, col2 = st.columns(2)
                 with col1:
-                    appointment_date = st.date_input("Date", min_value=date.today())
-                with col2:
-                    appointment_time = st.time_input("Time")
-                
-                notes = st.text_area("Notes", placeholder="Additional information about the appointment")
-                
-                if st.button("Book Appointment", type="primary"):
-                    appointment_id = add_appointment(
-                        patient_id=patient_id,
-                        patient_name=patient_data['full_name'],
-                        gender=patient_data['gender'],
-                        age=patient_data['age'],
-                        village=patient_data['village'],
-                        traditional_authority=patient_data['traditional_authority'],
-                        district=patient_data['district'],
-                        marital_status=patient_data['marital_status'],
-                        appointment_date=appointment_date,
-                        appointment_time=appointment_time.strftime("%H:%M"),
-                        booked_by=st.session_state.user_name,
-                        doctor_email=doctor_email,
-                        notes=notes
+                    appointment_date = st.date_input(
+                        "Date:", 
+                        min_value=date.today(),
+                        help="Appointments cannot be scheduled in the past"
                     )
-                    
-                    if appointment_id:
-                        st.success(f"Appointment booked successfully (ID: {appointment_id})")
-                        st.balloons()
-                        time.sleep(1)
-                        st.rerun()
+                with col2:
+                    appointment_time = st.time_input(
+                        "Time:",
+                        help="Select between 8:00 AM and 5:00 PM"
+                    )
+                
+                notes = st.text_area(
+                    "Notes:", 
+                    placeholder="Additional information about the appointment",
+                    max_chars=500
+                )
+                
+                if st.button("Schedule Appointment", type="primary"):
+                    # Validate time
+                    if not (time(8, 0) <= appointment_time <= time(17, 0)):
+                        st.error("Appointments must be between 8:00 AM and 5:00 PM")
                     else:
-                        st.error("Failed to book appointment")
+                        appointment_id = add_appointment(
+                            patient_id=patient_id,
+                            patient_name=patient_data['full_name'],
+                            gender=patient_data['gender'],
+                            age=patient_data['age'],
+                            village=patient_data['village'],
+                            traditional_authority=patient_data['traditional_authority'],
+                            district=patient_data['district'],
+                            marital_status=patient_data['marital_status'],
+                            appointment_date=appointment_date,
+                            appointment_time=appointment_time,
+                            booked_by=st.session_state.user_name,
+                            doctor_email=doctor_email,
+                            notes=notes
+                        )
+                        
+                        if appointment_id:
+                            st.success(f"Appointment scheduled successfully (ID: {appointment_id})")
+                            st.balloons()
+                            time.sleep(1)
+                            st.rerun()
     
     with tab2:
         st.markdown('<div class="section-title">Manage Appointments</div>', unsafe_allow_html=True)
         
-        # Get all appointments with filtering options
-        appointments = get_appointments()
+        # Enhanced filtering with date ranges
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            status_filter = st.selectbox(
+                "Status:",
+                options=["All", "Pending", "Confirmed", "Completed", "Cancelled"],
+                index=0
+            )
+        with col2:
+            doctor_filter = st.selectbox(
+                "Doctor:",
+                options=["All"] + sorted(get_doctors()['email'].unique().tolist()),
+                index=0
+            )
+        with col3:
+            date_filter = st.selectbox(
+                "Date Range:",
+                options=["All", "Today", "Yesterday", "This Week", "Last Week", "This Month", "Custom"],
+                index=0
+            )
+        with col4:
+            if date_filter == "Custom":
+                date_range = st.date_input(
+                    "Select date range:",
+                    value=(date.today(), date.today() + timedelta(days=7)),
+                    min_value=date.today() - timedelta(days=365),
+                    max_value=date.today() + timedelta(days=365)
+                )
+        
+        # Get filtered appointments
+        filter_params = {}
+        if status_filter != "All":
+            filter_params['status_filter'] = status_filter
+        if doctor_filter != "All":
+            filter_params['doctor_filter'] = doctor_filter
+        
+        if date_filter != "All":
+            today = date.today()
+            if date_filter == "Today":
+                filter_params['date_range'] = (today, today)
+            elif date_filter == "Yesterday":
+                yesterday = today - timedelta(days=1)
+                filter_params['date_range'] = (yesterday, yesterday)
+            elif date_filter == "This Week":
+                start = today - timedelta(days=today.weekday())
+                end = start + timedelta(days=6)
+                filter_params['date_range'] = (start, end)
+            elif date_filter == "Last Week":
+                start = today - timedelta(days=today.weekday() + 7)
+                end = start + timedelta(days=6)
+                filter_params['date_range'] = (start, end)
+            elif date_filter == "This Month":
+                start = date(today.year, today.month, 1)
+                end = date(today.year, today.month + 1, 1) - timedelta(days=1)
+                filter_params['date_range'] = (start, end)
+            elif date_filter == "Custom" and len(date_range) == 2:
+                filter_params['date_range'] = date_range
+        
+        appointments = get_appointments(**filter_params)
+        
         if not appointments.empty:
-            # Add filters
-            st.markdown("### Filters")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                status_filter = st.selectbox(
-                    "Status",
-                    options=["All", "Pending", "Completed", "Cancelled"],
-                    index=0
+            # Enhanced display with sorting
+            sort_col, _ = st.columns([1, 3])
+            with sort_col:
+                sort_by = st.selectbox(
+                    "Sort by:",
+                    options=["Date (Newest)", "Date (Oldest)", "Patient Name", "Doctor", "Status"]
                 )
             
-            with col2:
-                date_filter = st.selectbox(
-                    "Date Range",
-                    options=["All", "Today", "This Week", "This Month", "Upcoming"],
-                    index=0
-                )
+            if sort_by == "Date (Newest)":
+                appointments = appointments.sort_values(['appointment_date', 'appointment_time'], ascending=[False, False])
+            elif sort_by == "Date (Oldest)":
+                appointments = appointments.sort_values(['appointment_date', 'appointment_time'], ascending=[True, True])
+            elif sort_by == "Patient Name":
+                appointments = appointments.sort_values('patient_name')
+            elif sort_by == "Doctor":
+                appointments = appointments.sort_values('doctor_email')
+            elif sort_by == "Status":
+                appointments = appointments.sort_values('status')
             
-            with col3:
-                doctor_filter = st.selectbox(
-                    "Doctor",
-                    options=["All"] + sorted(appointments['doctor_email'].unique().tolist()),
-                    index=0
-                )
-            
-            # Apply filters
-            filtered_appointments = appointments.copy()
-            if status_filter != "All":
-                filtered_appointments = filtered_appointments[filtered_appointments['status'] == status_filter]
-            
-            if date_filter != "All":
-                today = date.today()
-                if date_filter == "Today":
-                    filtered_appointments = filtered_appointments[filtered_appointments['appointment_date'] == today]
-                elif date_filter == "This Week":
-                    start_date = today - timedelta(days=today.weekday())
-                    end_date = start_date + timedelta(days=6)
-                    filtered_appointments = filtered_appointments[
-                        (filtered_appointments['appointment_date'] >= start_date) &
-                        (filtered_appointments['appointment_date'] <= end_date)
-                    ]
-                elif date_filter == "This Month":
-                    start_date = date(today.year, today.month, 1)
-                    end_date = date(today.year, today.month + 1, 1) - timedelta(days=1)
-                    filtered_appointments = filtered_appointments[
-                        (filtered_appointments['appointment_date'] >= start_date) &
-                        (filtered_appointments['appointment_date'] <= end_date)
-                    ]
-                elif date_filter == "Upcoming":
-                    filtered_appointments = filtered_appointments[
-                        filtered_appointments['appointment_date'] >= today
-                    ]
-            
-            if doctor_filter != "All":
-                filtered_appointments = filtered_appointments[filtered_appointments['doctor_email'] == doctor_filter]
-            
-            # Display filtered appointments
-            st.dataframe(filtered_appointments, use_container_width=True)
-            
-            # Appointment actions
-            st.markdown("### Appointment Actions")
-            selected_appointment = st.selectbox(
-                "Select an appointment to manage",
-                options=filtered_appointments['patient_name'] + " - " + 
-                        filtered_appointments['appointment_date'].astype(str) + " " + 
-                        filtered_appointments['appointment_time'],
-                key="appointment_select"
+            # Display with interactive elements
+            st.dataframe(
+                appointments[[
+                    'id', 'patient_name', 'doctor_email', 'appointment_date', 
+                    'appointment_time', 'status', 'notes'
+                ]],
+                use_container_width=True,
+                hide_index=True
             )
             
-            if selected_appointment:
-                appointment_id = filtered_appointments.iloc[
-                    (filtered_appointments['patient_name'] + " - " + 
-                     filtered_appointments['appointment_date'].astype(str) + " " + 
-                     filtered_appointments['appointment_time']).tolist().index(selected_appointment)
-                ]['id']
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    new_status = st.selectbox(
-                        "Update Status",
-                        options=["Pending", "Completed", "Cancelled"],
-                        index=["Pending", "Completed", "Cancelled"].index(
-                            filtered_appointments[filtered_appointments['id'] == appointment_id]['status'].iloc[0]
-                        )
-                    )
-                    
-                    if st.button("Update Status"):
-                        conn = sqlite3.connect(DB_NAME)
-                        try:
-                            conn.execute(
-                                "UPDATE appointments SET status = ? WHERE id = ?",
-                                (new_status, appointment_id)
-                            )
-                            conn.commit()
-                            st.success("Status updated successfully!")
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"Error updating status: {str(e)}")
-                        finally:
-                            conn.close()
-                
-                with col2:
-                    if st.button("Reschedule Appointment"):
-                        st.session_state.reschedule_appt = appointment_id
-                        st.rerun()
-                
-                with col3:
-                    if st.button("Cancel Appointment", type="secondary"):
-                        conn = sqlite3.connect(DB_NAME)
-                        try:
-                            conn.execute(
-                                "UPDATE appointments SET status = 'Cancelled' WHERE id = ?",
-                                (appointment_id,)
-                            )
-                            conn.commit()
-                            st.success("Appointment cancelled successfully!")
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"Error cancelling appointment: {str(e)}")
-                        finally:
-                            conn.close()
+            # Enhanced appointment actions
+            selected_id = st.text_input(
+                "Enter Appointment ID to manage:",
+                help="Find ID in the table above"
+            )
             
-            # Reschedule interface
-            if 'reschedule_appt' in st.session_state:
-                appointment_to_reschedule = appointments[appointments['id'] == st.session_state.reschedule_appt].iloc[0]
-                
-                st.markdown("---")
-                st.markdown("### Reschedule Appointment")
-                st.markdown(f"Patient: {appointment_to_reschedule['patient_name']}")
-                st.markdown(f"Current Date/Time: {appointment_to_reschedule['appointment_date']} {appointment_to_reschedule['appointment_time']}")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    new_date = st.date_input("New Date", min_value=date.today())
-                with col2:
-                    new_time = st.time_input("New Time")
-                
-                if st.button("Confirm Reschedule"):
-                    conn = sqlite3.connect(DB_NAME)
-                    try:
-                        conn.execute(
-                            "UPDATE appointments SET appointment_date = ?, appointment_time = ?, status = 'Pending' WHERE id = ?",
-                            (new_date, new_time.strftime("%H:%M"), st.session_state.reschedule_appt)
-                        )
-                        conn.commit()
-                        st.success("Appointment rescheduled successfully!")
-                        del st.session_state.reschedule_appt
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error rescheduling appointment: {str(e)}")
-                    finally:
-                        conn.close()
-                
-                if st.button("Cancel Reschedule", type="secondary"):
-                    del st.session_state.reschedule_appt
-                    st.rerun()
+            if selected_id:
+                try:
+                    selected_id = int(selected_id)
+                    appointment = get_appointment_by_id(selected_id, detailed=True)
+                    
+                    if appointment:
+                        with st.expander(f"Manage Appointment {selected_id}", expanded=True):
+                            st.markdown(f"""
+                            **Patient:** {appointment['patient_name']}  
+                            **Doctor:** {appointment['doctor_email']}  
+                            **Scheduled:** {appointment['appointment_date']} {appointment['appointment_time']}  
+                            **Current Status:** {appointment['status']}
+                            """)
+                            
+                            cols = st.columns(3)
+                            with cols[0]:
+                                new_status = st.selectbox(
+                                    "Update Status:",
+                                    options=["Pending", "Confirmed", "Completed", "Cancelled"],
+                                    index=["Pending", "Confirmed", "Completed", "Cancelled"].index(appointment['status'])
+                                )
+                                if st.button("Update Status"):
+                                    if update_appointment_status(selected_id, new_status):
+                                        st.success("Status updated!")
+                                        time.sleep(1)
+                                        st.rerun()
+                            
+                            with cols[1]:
+                                if st.button("Reschedule Appointment"):
+                                    show_reschedule_form(selected_id)
+                            
+                            with cols[2]:
+                                if st.button("Delete Appointment", type="secondary"):
+                                    if st.checkbox("Confirm permanent deletion"):
+                                        if delete_appointment(selected_id):
+                                            st.success("Appointment deleted!")
+                                            time.sleep(1)
+                                            st.rerun()
+                    else:
+                        st.error(f"No appointment found with ID {selected_id}")
+                except ValueError:
+                    st.error("Please enter a valid numeric appointment ID")
         else:
-            st.info("No appointments found")
+            st.info("No appointments match the selected filters")
+    
+    with tab3:
+        st.markdown('<div class="section-title">Appointment Analytics</div>', unsafe_allow_html=True)
+        
+        # Time period selection
+        time_period = st.selectbox(
+            "Report Time Period:",
+            options=["Last 7 Days", "Last 30 Days", "Last 90 Days", "This Year", "All Time"],
+            index=1
+        )
+        
+        period_map = {
+            "Last 7 Days": "7 days",
+            "Last 30 Days": "30 days",
+            "Last 90 Days": "90 days",
+            "This Year": f"{date.today().year}-01-01",
+            "All Time": "1000 days"  # Effectively all time
+        }
+        
+        stats = get_appointment_stats(period_map[time_period])
+        
+        if stats:
+            # Key metrics
+            st.markdown("### Key Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Appointments", stats['total'])
+            with col2:
+                st.metric("Completed", stats['completed'], 
+                         delta=f"{stats['completed']/max(1, stats['total'])*100:.1f}%")
+            with col3:
+                st.metric("Pending", stats['pending'])
+            with col4:
+                st.metric("Cancelled", stats['cancelled'])
+            
+            # Visualizations
+            st.markdown("### Status Distribution")
+            status_df = pd.DataFrame.from_dict(stats['status_distribution'], orient='index', columns=['Count'])
+            fig1 = px.pie(
+                status_df, 
+                values='Count', 
+                names=status_df.index,
+                title=f"Appointment Status Distribution ({time_period})",
+                hole=0.3
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+            
+            st.markdown("### Daily Appointment Trend")
+            if not stats['daily_trend'].empty:
+                fig2 = px.line(
+                    stats['daily_trend'], 
+                    x='day', 
+                    y=['count', 'completed'],
+                    title=f"Daily Appointments ({time_period})",
+                    labels={'value': 'Appointments', 'day': 'Date'},
+                    hover_data={'day': '|%B %d, %Y'}
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+            
+            st.markdown("### Doctor Workload")
+            doctor_df = pd.DataFrame(stats['doctor_workload'], columns=['Doctor', 'Appointments'])
+            fig3 = px.bar(
+                doctor_df,
+                x='Doctor',
+                y='Appointments',
+                title=f"Doctor Workload ({time_period})",
+                color='Appointments',
+                color_continuous_scale='Blues'
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+        else:
+            st.error("Could not load appointment statistics")
 
+def show_reschedule_form(appointment_id):
+    """Enhanced reschedule form with validation"""
+    appointment = get_appointment_by_id(appointment_id, detailed=True)
+    if not appointment:
+        st.error(f"Appointment ID {appointment_id} not found")
+        return
+    
+    with st.form(f"reschedule_form_{appointment_id}", clear_on_submit=False):
+        st.markdown(f"""
+        ### Reschedule Appointment {appointment_id}
+        **Patient:** {appointment['patient_name']}  
+        **Current Date/Time:** {appointment['appointment_date']} {appointment['appointment_time']}  
+        **Doctor:** {appointment['doctor_email']}
+        """)
+        
+        # Doctor selection for reassignment
+        doctors = get_doctors()
+        current_doctor_idx = doctors[doctors['email'] == appointment['doctor_email']].index[0]
+        new_doctor = st.selectbox(
+            "Doctor (optional change):",
+            options=doctors['full_name'] + " (" + doctors['email'] + ")",
+            index=current_doctor_idx,
+            help="Keep current doctor or select a different one"
+        )
+        new_doctor_email = doctors.iloc[doctors['full_name'].str.cat(doctors['email'], sep=" (").str.cat([")"]*len(doctors)).tolist().index(new_doctor)]['email']
+        
+        # Date/time selection
+        col1, col2 = st.columns(2)
+        with col1:
+            new_date = st.date_input(
+                "New Date:", 
+                min_value=date.today(),
+                value=appointment['appointment_date']
+            )
+        with col2:
+            new_time = st.time_input(
+                "New Time:",
+                value=datetime.strptime(appointment['appointment_time'], "%H:%M").time()
+            )
+        
+        # Confirmation
+        if st.form_submit_button("Confirm Reschedule"):
+            if new_date < date.today():
+                st.error("Cannot schedule appointments in the past")
+            elif not (time(8, 0) <= new_time <= time(17, 0)):
+                st.error("Appointments must be between 8:00 AM and 5:00 PM")
+            else:
+                if reschedule_appointment(
+                    appointment_id, 
+                    new_date, 
+                    new_time,
+                    new_doctor_email if new_doctor_email != appointment['doctor_email'] else None
+                ):
+                    st.success("Appointment rescheduled successfully!")
+                    time.sleep(1)
+                    st.rerun()
+        
+        if st.form_submit_button("Cancel", type="secondary"):
+            st.rerun()
+            
 # -------------------------------
 # 📊 Analytics Page
 # -------------------------------
@@ -2186,7 +3148,7 @@ def _display_inbox_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Inbox", key="refresh_inbox"):
-            st.rerun()
+            st.experimental_rerun()
     
     try:
         with st.spinner("Loading messages..."):
@@ -3119,7 +4081,7 @@ def _add_new_user(name, email, role, status):
         conn.commit()
         st.success(f"User added successfully. Temporary password: {temp_password}")
         time.sleep(1)
-        st.rerun()
+        st.experimental_rerun()
     except sqlite3.IntegrityError:
         st.error("Email already exists")
     except Exception as e:
@@ -3256,11 +4218,12 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-
+    
     # Then load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
+
     html, body, [class*="css"] {
         font-family: 'Open Sans', sans-serif;
         font-size: 14px;
@@ -3268,9 +4231,11 @@ def main():
         font-weight: 400;
         color: #2d3748;
     }
+
     .main-title, .section-title, .hero-title, .step-title {
         font-family: 'Playfair Display', serif;
     }
+
     .main {
         background: linear-gradient(135deg, #98F5E1 0%, #B8F5D1 50%, #D1F5E8 100%);
         min-height: 100vh;
@@ -3286,6 +4251,8 @@ def main():
         margin-bottom: 0.5rem;
         border: 1px solid rgba(255, 255, 255, 0.3);
     }
+
+    /* Titles */
     .main-title {
         font-size: 2.5rem;
         font-weight: 700;
@@ -3320,6 +4287,8 @@ def main():
         height: 2px;
         background: #38a169;
     }
+
+    /* Card Styling */
     .feature-card {
         background: rgba(255, 255, 255, 0.8);
         backdrop-filter: blur(8px);
@@ -3344,6 +4313,8 @@ def main():
         height: 3px;
         background: linear-gradient(90deg, #48bb78, #38a169);
     }
+
+    /* Metric Card */
     .metric-card {
         background: rgba(255, 255, 255, 0.85);
         backdrop-filter: blur(8px);
@@ -3371,6 +4342,8 @@ def main():
         -webkit-text-fill-color: transparent;
         line-height: 1;
     }
+
+    /* Status Tags */
     .status-success, .status-error, .status-warning {
         font-family: 'Open Sans', sans-serif;
         padding: 0.6rem 1.2rem;
@@ -3390,6 +4363,8 @@ def main():
     .status-warning {
         background: linear-gradient(135deg, #ed8936, #dd6b20);
     }
+
+    /* Buttons */
     .stButton > button, .stDownloadButton > button {
         font-family: 'Open Sans', sans-serif !important;
         background: linear-gradient(135deg, #48bb78, #38a169) !important;
@@ -3405,6 +4380,8 @@ def main():
         transform: translateY(-1px) !important;
         box-shadow: 0 4px 16px rgba(72, 187, 120, 0.4) !important;
     }
+
+    /* Animations */
     .fade-in {
         animation: fadeIn 0.8s ease-in;
     }
@@ -3421,16 +4398,17 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-
+    
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
-
+    
+    # Initialize navigation state
     if 'nav' not in st.session_state:
         st.session_state.nav = "Home"
-
-    # Sidebar
+    
+    # Sidebar navigation
     with st.sidebar:
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 2rem;">
@@ -3439,7 +4417,7 @@ def main():
             <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">Welcome, {st.session_state.user_name}</div>
         </div>
         """, unsafe_allow_html=True)
-
+        
         # Navigation menu
         menu_options = {
             "🏠 Home": "Home",
@@ -3448,23 +4426,25 @@ def main():
             "📊 Analytics": "Analytics",
             "📧 Messages": "Messages"
         }
-
+        
+        # Add admin panel if user is admin
         if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
-
+        
+        # Create navigation buttons
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
-                if st.session_state.nav != page:
-                    st.session_state.nav = page
-                    st.rerun()
-
+                st.session_state.nav = page
+                st.rerun()
+        
+        # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            st.session_state.nav = "Home"
             st.rerun()
-
+        
+        # System status
         st.sidebar.markdown("---")
         st.sidebar.markdown("""
         <div style="font-size: 0.75rem; color: #718096; text-align: center;">
@@ -3472,7 +4452,7 @@ def main():
             <br>v1.0.0
         </div>
         """, unsafe_allow_html=True)
-
+    
     # Page routing
     if st.session_state.nav == "Home":
         show_home_page()
@@ -3488,11 +4468,8 @@ def main():
         show_admin_panel()
     else:
         st.warning("Page not found")
-        if st.session_state.nav != "Home":
-            st.session_state.nav = "Home"
-            st.rerun()
+        st.session_state.nav = "Home"
+        st.rerun()
 
-
-# Entry point
 if __name__ == "__main__":
     main()
