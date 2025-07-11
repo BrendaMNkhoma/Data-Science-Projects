@@ -47,7 +47,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "admin_salt"  # In production, use a unique salt per user
+    salt = "zambica_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -401,8 +401,8 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin@gmail.com', 
-                    hash_password("admin"),
+                    'admin0@gmail.com', 
+                    hash_password("admin.com"),
                     'admin',
                     'approved',
                     1  # self-approved
@@ -460,10 +460,10 @@ def init_database():
                 
                 if admin:
                     admin_id, current_password = admin
-                    if not verify_password("admin", current_password):
+                    if not verify_password("admin.com", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
-                        ''', (hash_password("admin"), admin_id))
+                        ''', (hash_password("admin.com"), admin_id))
                         conn.commit()
                 
                 cursor.execute("INSERT INTO migrations (version) VALUES (3)")
