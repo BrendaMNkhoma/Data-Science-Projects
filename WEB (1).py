@@ -1147,7 +1147,7 @@ def show_auth_page():
                         if login_user(email, password):
                             st.success("Login successful! Redirecting...")
                             time.sleep(1)
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.error("Login failed - please try again", icon="🚨")
 
@@ -1155,7 +1155,7 @@ def show_auth_page():
             st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
             if st.button("Register here", key="to_register", use_container_width=True):
                 st.session_state.auth_mode = "register"
-                st.experimental_rerun()
+                st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1191,7 +1191,7 @@ def show_auth_page():
                             st.success("Registration submitted for admin approval", icon="✅")
                             time.sleep(1)
                             st.session_state.auth_mode = "login"
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.error("Registration failed - please try again", icon="🚨")
 
@@ -1199,7 +1199,7 @@ def show_auth_page():
             st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
             if st.button("Sign in here", key="to_login", use_container_width=True):
                 st.session_state.auth_mode = "login"
-                st.experimental_rerun()
+                st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1408,17 +1408,17 @@ def show_home_page():
     with action_col1:
         if st.button("🔍 New Detection", use_container_width=True):
             st.session_state.nav = "Detection"
-            st.experimental_rerun()
+            st.rerun()
     
     with action_col2:
         if st.button("📅 Schedule", use_container_width=True):
             st.session_state.nav = "Appointments"
-            st.experimental_rerun()
+            st.rerun()
     
     with action_col3:
         if st.button("✉️ Messages", use_container_width=True):
             st.session_state.nav = "Messages"
-            st.experimental_rerun()
+            st.rerun()
     
     # Recent Activity
     st.markdown('<div class="section-title">Recent Activity</div>', unsafe_allow_html=True)
@@ -1686,7 +1686,6 @@ def _show_manage_detections_interface():
     else:
         st.info("No detection records found")
 
-
 # -------------------------------
 # 📅 Appointments Page 
 # -------------------------------
@@ -1766,7 +1765,7 @@ def show_appointments_page():
                         st.success(f"Appointment booked successfully (ID: {appointment_id})")
                         st.balloons()
                         time.sleep(1)
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Failed to book appointment")
     
@@ -1881,7 +1880,7 @@ def show_appointments_page():
                 with col2:
                     if st.button("Reschedule Appointment"):
                         st.session_state.reschedule_appt = appointment_id
-                        st.experimental_rerun()
+                        st.rerun()
                 
                 with col3:
                     if st.button("Cancel Appointment", type="secondary"):
@@ -1924,7 +1923,7 @@ def show_appointments_page():
                         conn.commit()
                         st.success("Appointment rescheduled successfully!")
                         del st.session_state.reschedule_appt
-                        st.experimental_rerun()
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error rescheduling appointment: {str(e)}")
                     finally:
@@ -1932,7 +1931,7 @@ def show_appointments_page():
                 
                 if st.button("Cancel Reschedule", type="secondary"):
                     del st.session_state.reschedule_appt
-                    st.experimental_rerun()
+                    st.rerun()
         else:
             st.info("No appointments found")
 
@@ -2187,7 +2186,7 @@ def _display_inbox_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Inbox", key="refresh_inbox"):
-            st.experimental_rerun()
+            st.rerun()
     
     try:
         with st.spinner("Loading messages..."):
@@ -2220,7 +2219,7 @@ def _display_sent_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Sent", key="refresh_sent"):
-            st.experimental_rerun()
+            st.rerun()
     
     try:
         with st.spinner("Loading sent messages..."):
@@ -2258,7 +2257,7 @@ def _display_trash_tab():
             if empty_trash(st.session_state.user_email):
                 st.success("Trash emptied successfully")
                 time.sleep(1)
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Failed to empty trash")
     
@@ -2332,7 +2331,7 @@ def _display_message(msg, inbox=False, sent=False, trash=False):
                     if restore_message(msg['id']):
                         st.success("Message restored")
                         time.sleep(1)
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Failed to restore message")
         else:
@@ -2340,7 +2339,7 @@ def _display_message(msg, inbox=False, sent=False, trash=False):
                 if delete_message(msg['id'], st.session_state.user_email):
                     st.success("Message moved to trash")
                     time.sleep(1)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Failed to delete message")
     
@@ -2419,7 +2418,7 @@ def _display_compose_section():
                             ):
                                 st.success("✅ Message sent successfully!")
                                 time.sleep(1)
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error("❌ Failed to send message. Please try again.")
             else:
@@ -2994,7 +2993,7 @@ def _display_system_settings():
         
         with col2:
             if st.button("Restart App", type="secondary", help="Restart the application", use_container_width=True):
-                st.experimental_rerun()
+                st.rerun()
         
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3027,7 +3026,7 @@ def _update_user_status(user_id, status):
         conn.commit()
         st.success(f"User status updated to {status}!")
         time.sleep(1)
-        st.experimental_rerun()
+        st.rerun()
     except Exception as e:
         st.error(f"Error updating user status: {str(e)}")
     finally:
@@ -3052,7 +3051,7 @@ def _reset_password_form(user):
                     conn.commit()
                     st.success("Password reset successfully")
                     time.sleep(1)
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     if conn:
                         conn.rollback()
@@ -3073,7 +3072,7 @@ def _delete_user(user):
             conn.commit()
             st.success("User deleted successfully")
             time.sleep(1)
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             if conn:
                 conn.rollback()
@@ -3120,7 +3119,7 @@ def _add_new_user(name, email, role, status):
         conn.commit()
         st.success(f"User added successfully. Temporary password: {temp_password}")
         time.sleep(1)
-        st.experimental_rerun()
+        st.rerun()
     except sqlite3.IntegrityError:
         st.error("Email already exists")
     except Exception as e:
@@ -3165,7 +3164,7 @@ def _update_model(new_model, version, description, release_notes):
             Backup saved to: {backup_path}
             """)
             time.sleep(1)
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             if conn:
                 conn.rollback()
@@ -3207,7 +3206,7 @@ def _restore_backup(backup_file):
             shutil.copy2(f"backups/{backup_file}", DB_NAME)
             st.success("Database restored successfully!")
             time.sleep(1)
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             st.error(f"Restore failed: {str(e)}")
 
@@ -3218,7 +3217,7 @@ def _clear_logs(conn):
         conn.commit()
         st.success("Logs cleared")
         time.sleep(1)
-        st.experimental_rerun()
+        st.rerun()
     except Exception as e:
         conn.rollback()
         st.error(f"Error clearing logs: {str(e)}")
@@ -3474,14 +3473,16 @@ def main():
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.experimental_rerun()
+                st.rerun()
+
         
         # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            st.experimental_rerun()
+            st.rerun()
+
         
         # System status
         st.sidebar.markdown("---")
@@ -3508,7 +3509,10 @@ def main():
     else:
         st.warning("Page not found")
         st.session_state.nav = "Home"
-        st.experimental_rerun()
+        st.rerun()
+
 
 if __name__ == "__main__":
     main()
+
+
