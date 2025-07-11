@@ -424,7 +424,7 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin@catarct.com', 
+                    'admin@cataract.com', 
                     hash_password("admin.com"),
                     'admin',
                     'approved',
