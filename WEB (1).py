@@ -455,15 +455,15 @@ def init_database():
         if current_version < 3:
             try:
                 # Verify admin password
-                cursor.execute("SELECT id, password FROM users WHERE email = 'zambica360@gmail.com'")
+                cursor.execute("SELECT id, password FROM users WHERE email = 'admin@gmail.com'")
                 admin = cursor.fetchone()
                 
                 if admin:
                     admin_id, current_password = admin
-                    if not verify_password("zambica.com", current_password):
+                    if not verify_password("admin", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
-                        ''', (hash_password("zambica.com"), admin_id))
+                        ''', (hash_password("admin"), admin_id))
                         conn.commit()
                 
                 cursor.execute("INSERT INTO migrations (version) VALUES (3)")
