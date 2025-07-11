@@ -401,7 +401,7 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'admin@gmail.com', 
+                    'admin0@gmail.com', 
                     hash_password("admin.com"),
                     'admin',
                     'approved',
@@ -1457,92 +1457,145 @@ def show_detection_page():
         - **Description:** {model_info['description']}
         - **Uploaded by:** {model_info['uploaded_by']}
         - **Path:** `{model_info['path']}`
+        - **Accuracy:** {model_info.get('metrics', {}).get('accuracy', 'N/A')}
         """)
     
     # Tab interface for different functions
     tab1, tab2 = st.tabs(["New Detection", "Manage Detections"])
     
     with tab1:
-        # Backward-compatible camera toggle
-        use_camera = st.checkbox("🎥 Use Camera", value=False)
-        
-        # Step 1: Select or register patient
-        st.markdown('<div class="section-title">Patient Information</div>', unsafe_allow_html=True)
-        
-        subtab1, subtab2 = st.tabs(["Existing Patient", "New Patient"])
-        
-        with subtab1:
-            patients = get_patients()
-            if patients.empty:
-                st.info("No patients found. Please register a new patient.")
-                patient_id = None
-            else:
-                patient_options = patients['full_name'] + " | " + patients['village'] + " | " + patients['district']
-                selected_patient = st.selectbox("Select Patient", options=patient_options)
-                patient_id = patients.iloc[patient_options.tolist().index(selected_patient)]['id']
-        
-        with subtab2:
-            st.markdown("### Register New Patient")
-            with st.form("patient_form"):
-                full_name = st.text_input("Full Name")
-                gender = st.selectbox("Gender", ["Male", "Female", "Other"])
-                age = st.number_input("Age", min_value=0, max_value=120)
-                village = st.text_input("Village")
-                traditional_authority = st.text_input("Traditional Authority")
-                district = st.text_input("District")
-                marital_status = st.selectbox("Marital Status", ["Single", "Married", "Divorced", "Widowed"])
-                
-                if st.form_submit_button("Register Patient"):
-                    patient_id = add_patient(full_name, gender, age, village, traditional_authority, district, marital_status)
+        _show_new_detection_interface()
+    
+    with tab2:
+        _show_manage_detections_interface()
+
+def _show_new_detection_interface():
+    """Show interface for new cataract detection"""
+    # Backward-compatible camera toggle
+    use_camera = st.checkbox("🎥 Use Camera", value=False)
+    
+    # Step 1: Select or register patient
+    st.markdown('<div class="section-title">Patient Information</div>', unsafe_allow_html=True)
+    
+    patient_id = _get_or_register_patient()
+    
+    # Step 2: Image capture/upload and prediction
+    if patient_id:
+        _process_eye_image(patient_id, use_camera)
+
+def _get_or_register_patient():
+    """Handle patient selection or registration"""
+    subtab1, subtab2 = st.tabs(["Existing Patient", "New Patient"])
+    patient_id = None
+    
+    with subtab1:
+        patients = get_patients()
+        if patients.empty:
+            st.info("No patients found. Please register a new patient.")
+        else:
+            patient_options = patients.apply(
+                lambda x: f"{x['full_name']} | {x['village']} | {x['district']} | Age: {x['age']}", 
+                axis=1
+            )
+            selected_patient = st.selectbox(
+                "Select Patient", 
+                options=patient_options,
+                key="patient_select"
+            )
+            patient_id = patients.iloc[patient_options.tolist().index(selected_patient)]['id']
+    
+    with subtab2:
+        st.markdown("### Register New Patient")
+        with st.form("patient_form", clear_on_submit=True):
+            cols = st.columns(2)
+            with cols[0]:
+                full_name = st.text_input("Full Name*", key="patient_name")
+                age = st.number_input("Age*", min_value=0, max_value=120, key="patient_age")
+                village = st.text_input("Village*", key="patient_village")
+            with cols[1]:
+                gender = st.selectbox(
+                    "Gender*", 
+                    options=["Male", "Female", "Other"], 
+                    key="patient_gender"
+                )
+                district = st.text_input("District*", key="patient_district")
+                marital_status = st.selectbox(
+                    "Marital Status", 
+                    options=["Single", "Married", "Divorced", "Widowed"],
+                    key="patient_marital"
+                )
+            
+            if st.form_submit_button("Register Patient"):
+                if not all([full_name, age, village, gender, district]):
+                    st.error("Please fill all required fields (*)")
+                else:
+                    patient_id = add_patient(
+                        full_name=full_name,
+                        gender=gender,
+                        age=age,
+                        village=village,
+                        traditional_authority="",  # Optional field
+                        district=district,
+                        marital_status=marital_status
+                    )
                     if patient_id:
                         st.success(f"Patient {full_name} registered successfully!")
-                        st.experimental_rerun()
+                        st.session_state.patient_id = patient_id
+                        st.rerun()
+    
+    return patient_id or st.session_state.get('patient_id')
+
+def _process_eye_image(patient_id, use_camera):
+    """Handle image capture/upload and prediction"""
+    st.markdown('<div class="section-title">Capture Eye Image</div>', unsafe_allow_html=True)
+    
+    img = None
+    if use_camera:
+        img = st.camera_input("Take an eye photo", key="camera_input")
+    else:
+        img = st.file_uploader(
+            "Or upload an eye image...", 
+            type=["jpg", "jpeg", "png"],
+            key="image_uploader"
+        )
+    
+    if img is not None:
+        # Display the captured/uploaded image
+        st.image(img, caption="Eye Image for Analysis", use_column_width=True)
         
-        # Step 2: Image capture/upload
-        if patient_id:
-            st.markdown('<div class="section-title">Capture Eye Image</div>', unsafe_allow_html=True)
+        # Save to temp file for prediction
+        temp_file = f"temp_eye_{patient_id}_{datetime.now().timestamp()}.jpg"
+        try:
+            with open(temp_file, "wb") as f:
+                f.write(img.getbuffer() if use_camera else img.getvalue())
             
-            img = None
-            
-            if use_camera:
-                # Camera capture
-                img = st.camera_input("Take an eye photo", key="camera_input")
-                
-                if img is not None:
-                    # Display the captured image
-                    st.image(img, caption="Captured Eye Image", use_column_width=True)
-            else:
-                # File upload
-                img = st.file_uploader("Or upload an eye image...", type=["jpg", "jpeg", "png"])
-                if img is not None:
-                    st.image(img, caption="Uploaded Eye Image", use_column_width=True)
-            
-            if img is not None:
-                # Save to temp file for prediction
-                temp_file = "temp_eye_image.jpg"
-                try:
-                    with open(temp_file, "wb") as f:
-                        if use_camera:
-                            f.write(img.getbuffer())
-                        else:
-                            f.write(img.getvalue())
+            # Load model and predict
+            model = load_detection_model()
+            if model and st.button("Analyze Image", key="analyze_btn"):
+                with st.spinner("Analyzing image..."):
+                    predicted_class, confidence = predict_image(temp_file, model)
                     
-                    # Load model and predict
-                    model = load_detection_model()
-                    if model:
-                        if st.button("Analyze Image"):
-                            with st.spinner("Analyzing image..."):
-                                predicted_class, confidence = predict_image(temp_file, model)
-                                
-                                if predicted_class:
-                                    st.markdown(f'''
-                                    <div class="feature-card">
-                                        <h3>Analysis Results</h3>
-                                        <p><strong>Prediction:</strong> {predicted_class}</p>
-                                        <p><strong>Confidence:</strong> {confidence:.2f}%</p>
-                                    </div>
-                                    ''', unsafe_allow_html=True)
-                                    
+                    if predicted_class:
+                        _display_prediction_results(
+                            patient_id=patient_id,
+                            predicted_class=predicted_class,
+                            confidence=confidence
+                        )
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+
+def _display_prediction_results(patient_id, predicted_class, confidence):
+    """Display and save prediction results"""
+    # Display results in a styled card
+    st.markdown(f'''
+    <div class="feature-card">
+        <h3>Analysis Results</h3>
+        <p><strong>Prediction:</strong> {predicted_class}</p>
+        <p><strong>Confidence:</strong> {confidence:.2f}%</p>
+    </div>
+    ''', unsafe_allow_html=True) 
                                     # Step 3: Save results
                                     st.markdown('<div class="section-title">Save Results</div>', unsafe_allow_html=True)
                                     
@@ -2755,7 +2808,7 @@ def _display_model_management():
                         st.success(f"✅ Model v{version} deployed successfully!")
                         st.balloons()
                         time.sleep(1)
-                        st.experimental_rerun()
+                        st.rerun()
                         
                     except Exception as e:
                         st.error(f"Deployment failed: {str(e)}")
@@ -2857,7 +2910,7 @@ def _display_model_management():
                                         st.session_state.current_model = selected_model['full_path']
                                         st.success(f"Model v{selected_model['version']} is now active")
                                         time.sleep(1)
-                                        st.experimental_rerun()
+                                        st.rerun()
                                     else:
                                         st.error("Model file not found")
                                 except Exception as e:
@@ -2881,7 +2934,7 @@ def _display_model_management():
                 conn.close()
         
         st.markdown("</div>", unsafe_allow_html=True)
-
+        
 def _display_system_settings():
     """Display system settings interface"""
     st.markdown('<div class="section-title">System Configuration</div>', unsafe_allow_html=True)
