@@ -47,7 +47,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "zambica_salt"  # In production, use a unique salt per user
+    salt = "admin_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -459,7 +459,7 @@ def init_database():
                 admin = cursor.fetchone()
                 
                 if admin:
-                    admin_id, current_password = admin
+                    admin_id, current_password = admin.com
                     if not verify_password("admin.com", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
