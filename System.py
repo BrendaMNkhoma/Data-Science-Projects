@@ -2613,54 +2613,51 @@ def _display_user_management():
     else:
         st.info("No users found in the database")
         _display_add_user_form()
+
+def _display_model_management():
+    """Display model management interface"""
+    st.markdown('<div class="section-title">AI Model Management</div>', unsafe_allow_html=True)
+    
+    with st.container():
+        st.markdown("""
+        <div class="model-card">
+            <h3>Current Model</h3>
+        """, unsafe_allow_html=True)
         
-def _update_model(new_model, version, description, release_notes):
-    """Update the AI model"""
-    try:
-        # Create backup directory if it doesn't exist
-        os.makedirs("model_backups", exist_ok=True)
+        model_info = get_active_model_info()
+        st.json({
+            "Version": model_info['version'],
+            "Description": model_info['description'],
+            "Upload Date": model_info['upload_date'],
+            "Uploaded By": model_info['uploaded_by'],
+            "Path": model_info['path']
+        })
         
-        # Create backup filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = f"model_backups/model_{timestamp}.h5"
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    with st.container():
+        st.markdown("""
+        <div class="model-card">
+            <h3>Update Model</h3>
+        """, unsafe_allow_html=True)
         
-        # Backup current model if exists
-        if os.path.exists(MODEL_PATH):
-            shutil.copy2(MODEL_PATH, backup_path)
-        
-        # Save new model
-        with open(MODEL_PATH, "wb") as f:
-            f.write(new_model.getbuffer())
-        
-        # Update model version in database
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_NAME)
-            conn.execute('''
-                INSERT INTO model_versions 
-                (version, description, release_notes, path, uploaded_by)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (version, description, release_notes, MODEL_PATH, st.session_state.user_id))
-            conn.commit()
+        with st.form("update_model_form"):
+            new_model = st.file_uploader(
+                "New Model File (.h5)",
+                type=['h5'],
+                help="Upload a new trained model file"
+            )
+            version = st.text_input("Version", placeholder="e.g. 1.2.0")
+            description = st.text_area("Description")
+            release_notes = st.text_area("Release Notes")
             
-            st.success(f"""
-            Model updated successfully to version {version}!
-            Backup saved to: {backup_path}
-            """)
-            time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            # Restore backup if DB update failed
-            if os.path.exists(backup_path):
-                shutil.copy2(backup_path, MODEL_PATH)
-            st.error(f"Database error: {str(e)}")
-        finally:
-            if conn:
-                conn.close()
-    except Exception as e:
-        st.error(f"Model update failed: {str(e)}")
+            if st.form_submit_button("Update Model"):
+                if not all([new_model, version, description]):
+                    st.error("Please fill all required fields")
+                else:
+                    _update_model(new_model, version, description, release_notes)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def _display_system_settings():
     """Display system settings interface"""
@@ -2903,54 +2900,6 @@ def _add_new_user(name, email, role, status):
     finally:
         if conn:
             conn.close()
-
-def _update_model(new_model, version, description, release_notes):
-    """Update the AI model"""
-    try:
-        # Create backup directory if it doesn't exist
-        os.makedirs("model_backups", exist_ok=True)
-        
-        # Create backup filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = f"model_backups/model_{timestamp}.h5"
-        
-        # Backup current model if exists
-        if os.path.exists(MODEL_PATH):
-            shutil.copy2(MODEL_PATH, backup_path)
-        
-        # Save new model
-        with open(MODEL_PATH, "wb") as f:
-            f.write(new_model.getbuffer())
-        
-        # Update model version in database
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_NAME)
-            conn.execute('''
-                INSERT INTO model_versions 
-                (version, description, release_notes, path, uploaded_by)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (version, description, release_notes, MODEL_PATH, st.session_state.user_id))
-            conn.commit()
-            
-            st.success(f"""
-            Model updated successfully to version {version}!
-            Backup saved to: {backup_path}
-            """)
-            time.sleep(1)
-            st.experimental_rerun()
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            # Restore backup if DB update failed
-            if os.path.exists(backup_path):
-                shutil.copy2(backup_path, MODEL_PATH)
-            st.error(f"Database error: {str(e)}")
-        finally:
-            if conn:
-                conn.close()
-    except Exception as e:
-        st.error(f"Model update failed: {str(e)}")
 
 def _create_db_backup(conn):
     """Create database backup"""
