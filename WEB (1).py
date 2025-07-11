@@ -47,7 +47,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "zambica_salt"  # In production, use a unique salt per user
+    salt = "admin_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -401,8 +401,8 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'zambica360@gmail.com', 
-                    hash_password("zambica.com"),
+                    'admin@gmail.com', 
+                    hash_password("admin"),
                     'admin',
                     'approved',
                     1  # self-approved
