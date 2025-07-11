@@ -4219,7 +4219,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Then load custom CSS
+    # Load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
@@ -4431,13 +4431,12 @@ def main():
         if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
         
-        # Create navigation buttons
+        # Create navigation buttons - removed st.rerun() from here
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.rerun()
         
-        # Logout button
+        # Logout button - keep st.rerun() here as we need to clear session
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
@@ -4453,23 +4452,31 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     
-    # Page routing
-    if st.session_state.nav == "Home":
-        show_home_page()
-    elif st.session_state.nav == "Detection":
-        show_detection_page()
-    elif st.session_state.nav == "Appointments":
-        show_appointments_page()
-    elif st.session_state.nav == "Analytics":
-        show_analytics_page()
-    elif st.session_state.nav == "Messages":
-        show_messages_page()
-    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
-        show_admin_panel()
-    else:
-        st.warning("Page not found")
+    # Page routing with error handling
+    try:
+        if st.session_state.nav == "Home":
+            show_home_page()
+        elif st.session_state.nav == "Detection":
+            show_detection_page()
+        elif st.session_state.nav == "Appointments":
+            show_appointments_page()
+        elif st.session_state.nav == "Analytics":
+            show_analytics_page()
+        elif st.session_state.nav == "Messages":
+            show_messages_page()
+        elif st.session_state.nav == "Admin":
+            if st.session_state.user_role == "admin":
+                show_admin_panel()
+            else:
+                st.warning("Unauthorized access")
+                st.session_state.nav = "Home"
+        else:
+            st.warning("Page not found")
+            st.session_state.nav = "Home"
+            
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
         st.session_state.nav = "Home"
-        st.rerun()
 
 if __name__ == "__main__":
     main()
