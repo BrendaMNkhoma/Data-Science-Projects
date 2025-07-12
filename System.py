@@ -328,8 +328,6 @@ def init_database():
                         confidence REAL NOT NULL,
                         attended_by TEXT NOT NULL,
                         notes TEXT,
-                        image_path TEXT,
-                        last_updated TIMESTAMP,
                         FOREIGN KEY (patient_id) REFERENCES patients(id)
                     )
                 ''')
@@ -499,16 +497,21 @@ def init_database():
         # Migration 5: Enhance detections and add audit logs (v5)
         if current_version < 5:
             try:
-                # Add columns to detections table
-                cursor.execute('''
-                    ALTER TABLE detections 
-                    ADD COLUMN image_path TEXT
-                ''')
+                # Check if columns exist before adding
+                cursor.execute("PRAGMA table_info(detections)")
+                columns = [col[1] for col in cursor.fetchall()]
                 
-                cursor.execute('''
-                    ALTER TABLE detections 
-                    ADD COLUMN last_updated TIMESTAMP
-                ''')
+                if 'image_path' not in columns:
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN image_path TEXT
+                    ''')
+                
+                if 'last_updated' not in columns:
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN last_updated TIMESTAMP
+                    ''')
                 
                 # Create detection logs table
                 cursor.execute('''
@@ -594,11 +597,6 @@ def init_database():
     finally:
         if conn:
             conn.close()
-
-# Initialize database on startup
-if not init_database():
-    st.error("Failed to initialize database. Please check the logs.")
-    st.stop()
         
 # 👥 Patient Management
 # -------------------------------
