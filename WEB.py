@@ -1054,17 +1054,6 @@ def show_auth_page():
         font-size: 0.9rem;
         margin-top: 0.5rem;
     }
-    .success-message {
-        color: #38a169;
-        font-size: 0.9rem;
-        margin-top: 0.5rem;
-    }
-    .password-hint {
-        font-size: 0.8rem;
-        color: #718096;
-        margin-top: -0.5rem;
-        margin-bottom: 1rem;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1079,21 +1068,18 @@ def show_auth_page():
             st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Sign in to your account</div>', unsafe_allow_html=True)
             
-            with st.form("login_form", clear_on_submit=False):
-                email = st.text_input("Email", placeholder="your@email.com", key="login_email").strip()
-                password = st.text_input("Password", type="password", key="login_password")
+            with st.form("login_form", clear_on_submit=True):
+                email = st.text_input("Email", placeholder="your@email.com").strip().lower()
+                password = st.text_input("Password", type="password")
                 
                 if st.form_submit_button("Sign In", type="primary", use_container_width=True):
                     if not email or not password:
                         st.error("Please enter both email and password", icon="⚠️")
+                    elif login_user(email, password):
+                        st.success("Login successful!")
+                        st.rerun()  # Explicit rerun to update UI after successful login
                     else:
-                        with st.spinner("Authenticating..."):
-                            if login_user(email, password):
-                                st.success("Login successful! Redirecting...", icon="✅")
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error("Login failed - please check your credentials", icon="🚨")
+                        st.error("Invalid email or password", icon="🚨")
 
             # Registration switch
             st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
@@ -1111,44 +1097,46 @@ def show_auth_page():
             st.markdown('<div class="auth-subtitle">Get started in seconds</div>', unsafe_allow_html=True)
             
             with st.form("register_form", clear_on_submit=True):
-                full_name = st.text_input("Full Name", placeholder="John Doe", key="reg_name").strip()
-                email = st.text_input("Email", placeholder="your@email.com", key="reg_email").strip()
-                password = st.text_input("Password", type="password", key="reg_password")
-                st.markdown('<div class="password-hint">Password must be at least 8 characters</div>', unsafe_allow_html=True)
-                confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm_password")
-                role = st.selectbox("Role", ["assistant", "doctor"], key="reg_role")
+                full_name = st.text_input("Full Name", placeholder="John Doe").strip()
+                email = st.text_input("Email", placeholder="your@email.com").strip().lower()
+                password = st.text_input("Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                role = st.selectbox("Role", ["assistant", "doctor"])
                 
                 if st.form_submit_button("Register", type="primary", use_container_width=True):
-                    error = False
-                    
-                    if not full_name:
-                        st.error("Full name is required", icon="⚠️")
-                        error = True
-                        
-                    if not email:
-                        st.error("Email is required", icon="⚠️")
-                        error = True
+                    if not all([full_name, email, password, confirm_password]):
+                        st.error("Please fill in all fields", icon="⚠️")
                     elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                         st.error("Please enter a valid email address", icon="✉️")
-                        error = True
-                        
-                    if len(password) < 8:
+                    elif len(password) < 8:
                         st.error("Password must be at least 8 characters", icon="🔒")
-                        error = True
-                        
-                    if password != confirm_password:
+                    elif password != confirm_password:
                         st.error("Passwords don't match", icon="🔁")
-                        error = True
-                        
-                    if not error:
-                        with st.spinner("Creating account..."):
-                            if get_user_by_email(email):
-                                st.error("Email already registered", icon="⛔")
-                            elif create_user(full_name, email, password, role):
-                                st.success("Registration submitted for admin approval", icon="✅")
-                                st.session_state.auth_mode = "login"
-                                time.sleep(2)
-                                st.rerun()
+                    elif get_user_by_email(email):
+                        st.error("Email already registered", icon="⛔")
+                    else:
+                        # Create user with pending status
+                        conn = sqlite3.connect(DB_NAME)
+                        try:
+                            cursor = conn.cursor()
+                            cursor.execute('''
+                                INSERT INTO users (full_name, email, password, role, status)
+                                VALUES (?, ?, ?, ?, ?)
+                            ''', (
+                                full_name,
+                                email,
+                                hash_password(password),
+                                role,
+                                'pending'  # New users need admin approval
+                            ))
+                            conn.commit()
+                            st.success("Registration submitted for admin approval", icon="✅")
+                            st.session_state.auth_mode = "login"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Registration failed: {str(e)}", icon="❌")
+                        finally:
+                            conn.close()
 
             # Login switch
             st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
