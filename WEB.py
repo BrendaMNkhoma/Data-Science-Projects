@@ -284,7 +284,7 @@ SESSION_TIMEOUT_MINUTES = 60  # Increased timeout to 1 hour
 # -------------------------------
 def hash_password(password):
     """Hash password using SHA256 with salt for better security"""
-    salt = "zambica_salt"  # In production, use a unique salt per user
+    salt = "admin_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
@@ -638,8 +638,8 @@ def init_database():
                     ) VALUES (?, ?, ?, ?, ?, ?)
                 ''', (
                     'Admin User', 
-                    'zambica360@gmail.com', 
-                    hash_password("zambica.com"),
+                    'admin@cataract.com', 
+                    hash_password("admin1234"),
                     'admin',
                     'approved',
                     1  # self-approved
@@ -692,15 +692,15 @@ def init_database():
         if current_version < 3:
             try:
                 # Verify admin password
-                cursor.execute("SELECT id, password FROM users WHERE email = 'zambica360@gmail.com'")
+                cursor.execute("SELECT id, password FROM users WHERE email = 'admin@cataract.com'")
                 admin = cursor.fetchone()
                 
                 if admin:
                     admin_id, current_password = admin
-                    if not verify_password("zambica.com", current_password):
+                    if not verify_password("admin1234", current_password):
                         cursor.execute('''
                             UPDATE users SET password = ? WHERE id = ?
-                        ''', (hash_password("zambica.com"), admin_id))
+                        ''', (hash_password("admin1234"), admin_id))
                         conn.commit()
                 
                 cursor.execute("INSERT INTO migrations (version) VALUES (3)")
@@ -1569,7 +1569,7 @@ def show_auth_page():
                 st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
-
+            
 # -------------------------------
 # 🏠 Home Page
 # -------------------------------
