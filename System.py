@@ -3615,7 +3615,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Load custom CSS
+    # Then load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
@@ -3804,23 +3804,14 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Initialize session state variables
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = True
-        st.session_state.nav = "Home"
-        st.session_state.logged_in = False
-        st.session_state.user_email = None
-        st.session_state.user_name = None
-        st.session_state.user_role = None
-        st.session_state.user_id = None
-        st.session_state.auth_token = None
-        st.session_state.detection_results = None
-        st.session_state.selected_patient = None
-    
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
+    
+    # Initialize navigation state
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
     
     # Sidebar navigation
     with st.sidebar:
@@ -3845,53 +3836,27 @@ def main():
         if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
         
-        # Create navigation buttons
+        # Create navigation buttons - REMOVED st.rerun() from here
         for label, page in menu_options.items():
-            if st.button(label, key=f"nav_{page}", use_container_width=True):
+            if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.experimental_rerun()
-        
-        # Logout button
-        st.markdown("---")
-        if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
-            logout_user()
-            st.session_state.clear()
-            st.session_state.initialized = True  # Maintain initialization flag
-            st.session_state.nav = "Home"
-            st.experimental_rerun()
-        
-        # System status
-        st.markdown("---")
-        st.markdown("""
-        <div style="font-size: 0.75rem; color: #718096; text-align: center;">
-            System Status: <span style="color: #38a169;">●</span> Operational
-            <br>v1.0.0
-        </div>
-        """, unsafe_allow_html=True)
     
-    # Page routing with error handling
-    try:
-        if st.session_state.nav == "Home":
-            show_home_page()
-        elif st.session_state.nav == "Detection":
-            show_detection_page()
-        elif st.session_state.nav == "Appointments":
-            show_appointments_page()
-        elif st.session_state.nav == "Analytics":
-            show_analytics_page()
-        elif st.session_state.nav == "Messages":
-            show_messages_page()
-        elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
-            show_admin_panel()
-        else:
-            st.warning("Page not found")
-            st.session_state.nav = "Home"
-            st.experimental_rerun()
-            
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
+    # Page routing - REMOVED st.rerun() from here
+    if st.session_state.nav == "Home":
+        show_home_page()
+    elif st.session_state.nav == "Detection":
+        show_detection_page()
+    elif st.session_state.nav == "Appointments":
+        show_appointments_page()
+    elif st.session_state.nav == "Analytics":
+        show_analytics_page()
+    elif st.session_state.nav == "Messages":
+        show_messages_page()
+    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
+        show_admin_panel()
+    else:
+        st.warning("Page not found")
         st.session_state.nav = "Home"
-        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
