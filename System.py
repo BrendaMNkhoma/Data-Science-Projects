@@ -42,117 +42,120 @@ MODEL_INPUT_SIZE = (224, 224)  # Expected input size for the model
 # 🔐 Enhanced Authentication Functions
 # -------------------------------
 def hash_password(password):
-    """Secure password hashing with unique salt per user"""
-    # In production, use a unique salt stored with each user
-    salt = "admin_salt"  
+    """Hash password using SHA256 with salt for better security"""
+    salt = "admin_salt"  # In production, use a unique salt per user
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_password(password, hashed):
-    """Secure password verification"""
+    """Verify password against hash"""
     return hash_password(password) == hashed
 
 def create_user(full_name, email, password, role='assistant'):
-    """Create new user account with validation"""
-    if not all([full_name, email, password]):
-        raise ValueError("All fields are required")
-    
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-        raise ValueError("Invalid email format")
-    
+    """Create new user account (pending approval)"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
         cursor.execute('''INSERT INTO users (full_name, email, password, role, status)
                           VALUES (?, ?, ?, ?, ?)''', 
-                          (full_name.strip(), 
-                           email.lower().strip(), 
-                           hash_password(password), 
-                           role, 
-                           'pending'))
+                          (full_name, email.lower(), hash_password(password), role, 'pending'))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        raise ValueError("Email already exists")
-    except Exception as e:
-        raise Exception(f"Registration failed: {str(e)}")
+        return False
     finally:
         conn.close()
 
-def manage_user_approval(user_id, admin_id, action):
-    """Generic function for approve/reject actions"""
-    if action not in ['approve', 'reject']:
-        raise ValueError("Invalid action")
-    
+def approve_user(user_id, admin_id):
+    """Approve a pending user registration"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute(f'''
+        cursor.execute('''
             UPDATE users 
-            SET status = ?,
+            SET status = 'approved',
                 approved_by = ?,
                 approved_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        ''', ('approved' if action == 'approve' else 'rejected', 
-              admin_id, 
-              user_id))
+        ''', (admin_id, user_id))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
     except Exception as e:
-        raise Exception(f"Error {action}ing user: {str(e)}")
+        print(f"Error approving user: {e}")
+        return False
+    finally:
+        conn.close()
+
+def reject_user(user_id, admin_id):
+    """Reject a pending user registration"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            UPDATE users 
+            SET status = 'rejected',
+                approved_by = ?,
+                approved_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (admin_id, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error rejecting user: {e}")
+        return False
     finally:
         conn.close()
 
 def get_pending_registrations():
-    """Get pending registrations with error handling"""
+    """Get all pending user registrations"""
     conn = sqlite3.connect(DB_NAME)
     try:
-        return pd.read_sql_query('''
-            SELECT id, full_name, email, role, created_at 
-            FROM users 
-            WHERE status = 'pending'
-            ORDER BY created_at DESC
-        ''', conn)
+        df = pd.read_sql_query("SELECT * FROM users WHERE status = 'pending'", conn)
+        return df
     except Exception as e:
-        st.error(f"Database error: {str(e)}")
+        st.error(f"Error getting pending registrations: {str(e)}")
         return pd.DataFrame()
     finally:
         conn.close()
 
 def get_user_by_email(email):
-    """Get user by email with proper error handling"""
-    if not email or not isinstance(email, str):
-        return None
-        
+    """Get user by email with all fields (case-insensitive)"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute('''
-            SELECT id, full_name, email, password, role, status 
-            FROM users 
-            WHERE LOWER(email) = LOWER(?)
-        ''', (email.strip(),))
-        return cursor.fetchone()
+        cursor.execute('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', (email,))
+        user = cursor.fetchone()
+        return user
     except Exception as e:
-        st.error(f"Database error: {str(e)}")
+        st.error(f"Error getting user by email: {str(e)}")
         return None
     finally:
         conn.close()
 
+def get_approved_users(role=None):
+    """Get all approved users, optionally filtered by role"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        if role:
+            df = pd.read_sql_query("SELECT * FROM users WHERE status = 'approved' AND role = ?", 
+                                  conn, params=(role,))
+        else:
+            df = pd.read_sql_query("SELECT * FROM users WHERE status = 'approved'", conn)
+        return df
+    except Exception as e:
+        st.error(f"Error getting approved users: {str(e)}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
 def create_session_token(user_id):
-    """Secure session token creation"""
-    if not user_id:
-        return None
-        
-    token = hashlib.sha256(
-        f"{user_id}{datetime.now()}{os.urandom(32)}".encode()
-    ).hexdigest()
-    
+    """Create a new session token for the user"""
+    token = hashlib.sha256(f"{user_id}{datetime.now()}{os.urandom(16)}".encode()).hexdigest()
     expires_at = datetime.now() + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
     
     conn = sqlite3.connect(DB_NAME)
     try:
         cursor = conn.cursor()
-        # Remove old tokens
+        # Delete any existing tokens for this user
         cursor.execute("DELETE FROM session_tokens WHERE user_id = ?", (user_id,))
         # Insert new token
         cursor.execute('''
@@ -162,112 +165,100 @@ def create_session_token(user_id):
         conn.commit()
         return token
     except Exception as e:
-        st.error(f"Session error: {str(e)}")
+        print(f"Error creating session token: {e}")
         return None
     finally:
         conn.close()
 
 def validate_session_token(token):
-    """Secure session validation"""
-    if not token:
-        return None
-        
+    """Validate a session token and return user if valid"""
     conn = sqlite3.connect(DB_NAME)
     try:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT u.* FROM users u
             JOIN session_tokens st ON u.id = st.user_id
-            WHERE st.token = ? 
-            AND st.expires_at > CURRENT_TIMESTAMP
-            AND u.status = 'approved'
+            WHERE st.token = ? AND st.expires_at > CURRENT_TIMESTAMP
         ''', (token,))
-        return cursor.fetchone()
+        user = cursor.fetchone()
+        return user
     except Exception as e:
-        st.error(f"Session validation error: {str(e)}")
+        print(f"Error validating session token: {e}")
         return None
     finally:
         conn.close()
 
+def delete_session_token(token):
+    """Delete a session token (logout)"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error deleting session token: {e}")
+        return False
+    finally:
+        conn.close()
+
 def verify_session():
-    """Comprehensive session verification"""
-    # Initialize session state if needed
-    if 'auth' not in st.session_state:
-        st.session_state.auth = {
-            'logged_in': False,
-            'user': None,
-            'token': None
-        }
+    """Verify and maintain session state across page refreshes"""
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
     
-    # Check existing valid session
-    if not st.session_state.auth['logged_in'] and 'auth_token' in st.session_state:
+    # Check for existing session cookie
+    if not st.session_state.logged_in and 'auth_token' in st.session_state:
         user = validate_session_token(st.session_state.auth_token)
         if user:
-            st.session_state.auth.update({
-                'logged_in': True,
-                'user': {
-                    'id': user[0],
-                    'name': user[1],
-                    'email': user[2],
-                    'role': user[4],
-                    'status': user[5]
-                },
-                'token': st.session_state.auth_token
-            })
+            st.session_state.logged_in = True
+            st.session_state.user_email = user[2]
+            st.session_state.user_name = user[1]
+            st.session_state.user_role = user[4]
+            st.session_state.user_id = user[0]
             return True
     
-    return st.session_state.auth['logged_in']
+    return st.session_state.logged_in
 
 def login_user(email, password):
-    """Secure login process with validation"""
-    try:
-        user = get_user_by_email(email)
-        if not user:
-            raise ValueError("Invalid credentials")
-            
-        if not verify_password(password, user[3]):
-            raise ValueError("Invalid credentials")
-            
-        if user[5] != 'approved':
-            raise ValueError("Account pending approval")
-            
-        token = create_session_token(user[0])
-        if not token:
-            raise ValueError("Session creation failed")
-            
-        # Update session state atomically
-        st.session_state.auth = {
-            'logged_in': True,
-            'user': {
-                'id': user[0],
-                'name': user[1],
-                'email': user[2],
-                'role': user[4],
-                'status': user[5]
-            },
-            'token': token
-        }
-        st.session_state.auth_token = token
-        
-        return True
-        
-    except Exception as e:
-        st.error(str(e))
+    """Set session state after successful login"""
+    user = get_user_by_email(email)
+    if not user:
+        st.error("Invalid email or password")
         return False
+    
+    # Verify password
+    if not verify_password(password, user[3]):
+        st.error("Invalid email or password")
+        return False
+    
+    # Check account status
+    if user[5] != 'approved':
+        st.error("Your account is pending approval")
+        return False
+    
+    # Create session token
+    token = create_session_token(user[0])
+    if not token:
+        st.error("Failed to create session")
+        return False
+    
+    # Set session state
+    st.session_state.logged_in = True
+    st.session_state.user_email = user[2]
+    st.session_state.auth_token = token
+    st.session_state.user_name = user[1]
+    st.session_state.user_role = user[4]
+    st.session_state.user_id = user[0]
+    
+    return True
 
 def logout_user():
-    """Secure logout with cleanup"""
-    if 'auth' in st.session_state and st.session_state.auth.get('token'):
-        delete_session_token(st.session_state.auth['token'])
-    
-    # Reset session state
-    st.session_state.auth = {
-        'logged_in': False,
-        'user': None,
-        'token': None
-    }
+    """Clear session state on logout"""
     if 'auth_token' in st.session_state:
-        del st.session_state.auth_token
+        delete_session_token(st.session_state.auth_token)
+    st.session_state.clear()
+    st.session_state.logged_in = False
 
 # -------------------------------
 # 🗄️ Database Initialization
@@ -1349,13 +1340,12 @@ def restore_message(message_id):
     finally:
         if conn:
             conn.close()
-            
+
 # -------------------------------
-# 🔐 Authentication UI 
+# 🔐 Authentication UI
 # -------------------------------
 def show_auth_page():
-    """Secure authentication interface with proper state management"""
-    # CSS Styling
+    """Show login/register interface with working switch"""
     st.markdown("""
     <style>
     .auth-container {
@@ -1402,109 +1392,82 @@ def show_auth_page():
     # Initialize auth mode
     if 'auth_mode' not in st.session_state:
         st.session_state.auth_mode = "login"
-    
-    # State for form messages
-    if 'auth_message' not in st.session_state:
-        st.session_state.auth_message = None
-    if 'auth_message_type' not in st.session_state:
-        st.session_state.auth_message_type = None
 
-    def clear_auth_message():
-        st.session_state.auth_message = None
-        st.session_state.auth_message_type = None
-
-    def set_auth_message(message, type_="error"):
-        st.session_state.auth_message = message
-        st.session_state.auth_message_type = type_
-
-    # Main container
-    with st.container():
-        st.markdown('<div class="auth-container">', unsafe_allow_html=True)
-        
-        # Display current auth message if exists
-        if st.session_state.auth_message:
-            div_class = "error-message" if st.session_state.auth_message_type == "error" else "success-message"
-            st.markdown(f'<div class="{div_class}">{st.session_state.auth_message}</div>', 
-                       unsafe_allow_html=True)
-        
-        # Login Form
-        if st.session_state.auth_mode == "login":
+    # Login Form
+    if st.session_state.auth_mode == "login":
+        with st.container():
+            st.markdown('<div class="auth-container">', unsafe_allow_html=True)
             st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Sign in to your account</div>', unsafe_allow_html=True)
             
-            with st.form("login_form", clear_on_submit=True):
-                email = st.text_input("Email", placeholder="your@email.com", key="login_email").strip()
-                password = st.text_input("Password", type="password", key="login_password")
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="your@email.com").strip()
+                password = st.text_input("Password", type="password")
                 
-                if st.form_submit_button("Sign In", type="primary", use_container_width=True):
-                    clear_auth_message()
-                    try:
-                        if not email or not password:
-                            raise ValueError("Please enter both email and password")
-                        
+                login_button = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+                
+                if login_button:
+                    if not email or not password:
+                        st.error("Please enter both email and password", icon="⚠️")
+                    else:
                         if login_user(email, password):
-                            set_auth_message("Login successful! Redirecting...", "success")
-                            st.session_state.auth_mode = "login"
-                            time.sleep(1)  # Let user see success message
-                            st.experimental_rerun()
+                            st.success("Login successful! Redirecting...")
+                            time.sleep(1)
+                            st.rerun()
                         else:
-                            raise ValueError("Invalid credentials")
-                    except Exception as e:
-                        set_auth_message(str(e), "error")
-                        st.experimental_rerun()
-            
+                            st.error("Login failed - please try again", icon="🚨")
+
             # Registration switch
             st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
             if st.button("Register here", key="to_register", use_container_width=True):
-                clear_auth_message()
                 st.session_state.auth_mode = "register"
-                st.experimental_rerun()
+                st.rerun()
 
-        # Registration Form
-        else:
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # Registration Form
+    else:
+        with st.container():
+            st.markdown('<div class="auth-container">', unsafe_allow_html=True)
             st.markdown('<div class="auth-title">Create Account</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Get started in seconds</div>', unsafe_allow_html=True)
             
-            with st.form("register_form", clear_on_submit=True):
-                full_name = st.text_input("Full Name", placeholder="John Doe", key="reg_name").strip()
-                email = st.text_input("Email", placeholder="your@email.com", key="reg_email").strip()
-                password = st.text_input("Password", type="password", key="reg_password")
-                confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm_password")
-                role = st.selectbox("Role", ["assistant", "doctor"], key="reg_role")
+            with st.form("register_form", clear_on_submit=False):
+                full_name = st.text_input("Full Name", placeholder="John Doe").strip()
+                email = st.text_input("Email", placeholder="your@email.com").strip()
+                password = st.text_input("Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                role = st.selectbox("Role", ["assistant", "doctor"])
                 
-                if st.form_submit_button("Register", type="primary", use_container_width=True):
-                    clear_auth_message()
-                    try:
-                        if not all([full_name, email, password, confirm_password]):
-                            raise ValueError("Please fill in all fields")
-                        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                            raise ValueError("Please enter a valid email address")
-                        if len(password) < 8:
-                            raise ValueError("Password must be at least 8 characters")
-                        if password != confirm_password:
-                            raise ValueError("Passwords don't match")
-                        if get_user_by_email(email):
-                            raise ValueError("Email already registered")
-                        
+                register_button = st.form_submit_button("Register", type="primary", use_container_width=True)
+                
+                if register_button:
+                    if not all([full_name, email, password, confirm_password]):
+                        st.error("Please fill in all fields", icon="⚠️")
+                    elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                        st.error("Please enter a valid email address", icon="✉️")
+                    elif len(password) < 8:
+                        st.error("Password must be at least 8 characters", icon="🔒")
+                    elif password != confirm_password:
+                        st.error("Passwords don't match", icon="🔁")
+                    elif get_user_by_email(email):
+                        st.error("Email already registered", icon="⛔")
+                    else:
                         if create_user(full_name, email, password, role):
-                            set_auth_message("Registration submitted for admin approval", "success")
+                            st.success("Registration submitted for admin approval", icon="✅")
+                            time.sleep(1)
                             st.session_state.auth_mode = "login"
-                            time.sleep(1)  # Let user see success message
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
-                            raise ValueError("Registration failed")
-                    except Exception as e:
-                        set_auth_message(str(e), "error")
-                        st.experimental_rerun()
-            
+                            st.error("Registration failed - please try again", icon="🚨")
+
             # Login switch
             st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
             if st.button("Sign in here", key="to_login", use_container_width=True):
-                clear_auth_message()
                 st.session_state.auth_mode = "login"
-                st.experimental_rerun()
+                st.rerun()
 
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------------
 # 🏠 Home Page
@@ -3642,10 +3605,10 @@ def _confirm_delete_model(model_id):
     return False
 
 # -------------------------------
-# 🧭 Main Navigation 
+# 🧭 Main Navigation
 # -------------------------------
 def main():
-    """Main application entry point with robust session handling"""
+    """Main application entry point"""
     # Set page config (MUST BE FIRST STREAMLIT COMMAND)
     st.set_page_config(
         page_title="Munthandiz Cataract Detection",
@@ -3843,20 +3806,14 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Initialize critical session variables
-    if 'initialized' not in st.session_state:
-        st.session_state.update({
-            'initialized': True,
-            'logged_in': False,
-            'auth_token': None,
-            'user_info': None,
-            'nav': 'Home'
-        })
-    
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
+    
+    # Initialize navigation state
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
     
     # Sidebar navigation
     with st.sidebar:
@@ -3864,9 +3821,7 @@ def main():
         <div style="text-align: center; margin-bottom: 2rem;">
             <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #2d3748;">Munthandiz</h1>
             <div style="font-size: 0.9rem; color: #4a5568;">Cataract Detection System</div>
-            <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">
-                Welcome, {st.session_state.user_info['full_name'] if st.session_state.user_info else 'Guest'}
-            </div>
+            <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">Welcome, {st.session_state.user_name}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -3880,32 +3835,25 @@ def main():
         }
         
         # Add admin panel if user is admin
-        if st.session_state.user_info and st.session_state.user_info['role'] == "admin":
+        if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
         
         # Create navigation buttons
         for label, page in menu_options.items():
-            if st.button(label, use_container_width=True, key=f"nav_{page}"):
+            if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.experimental_rerun()
+                st.rerun()
         
         # Logout button
-        st.markdown("---")
-        if st.button("🚪 Logout", use_container_width=True):
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            st.session_state.update({
-                'initialized': True,
-                'logged_in': False,
-                'auth_token': None,
-                'user_info': None,
-                'nav': 'Home'
-            })
-            st.experimental_rerun()
+            st.rerun()
         
         # System status
-        st.markdown("---")
-        st.markdown("""
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
         <div style="font-size: 0.75rem; color: #718096; text-align: center;">
             System Status: <span style="color: #38a169;">●</span> Operational
             <br>v1.0.0
@@ -3913,32 +3861,22 @@ def main():
         """, unsafe_allow_html=True)
     
     # Page routing
-    try:
-        if st.session_state.nav == "Home":
-            show_home_page()
-        elif st.session_state.nav == "Detection":
-            show_detection_page()
-        elif st.session_state.nav == "Appointments":
-            show_appointments_page()
-        elif st.session_state.nav == "Analytics":
-            show_analytics_page()
-        elif st.session_state.nav == "Messages":
-            show_messages_page()
-        elif (st.session_state.nav == "Admin" and 
-              st.session_state.user_info and 
-              st.session_state.user_info['role'] == "admin"):
-            show_admin_panel()
-        else:
-            st.warning("Page not found")
-            st.session_state.nav = "Home"
-            st.experimental_rerun()
-            
-    except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        st.error("Please refresh the page or contact support")
-        if 'logged_in' in st.session_state:
-            st.session_state.logged_in = False
-        st.stop()
+    if st.session_state.nav == "Home":
+        show_home_page()
+    elif st.session_state.nav == "Detection":
+        show_detection_page()
+    elif st.session_state.nav == "Appointments":
+        show_appointments_page()
+    elif st.session_state.nav == "Analytics":
+        show_analytics_page()
+    elif st.session_state.nav == "Messages":
+        show_messages_page()
+    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
+        show_admin_panel()
+    else:
+        st.warning("Page not found")
+        st.session_state.nav = "Home"
+        st.rerun()
 
 if __name__ == "__main__":
     main()
