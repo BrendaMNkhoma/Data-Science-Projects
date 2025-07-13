@@ -3602,6 +3602,7 @@ def _confirm_delete_model(model_id):
                 return False
     return False
 
+
 # -------------------------------
 # 🧭 Main Navigation
 # -------------------------------
@@ -3836,12 +3837,29 @@ def main():
         if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
         
-        # Create navigation buttons - REMOVED st.rerun() from here
+        # Create navigation buttons
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
+                st.rerun()
+        
+        # Logout button
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
+            logout_user()
+            st.session_state.clear()
+            st.rerun()
+        
+        # System status
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        <div style="font-size: 0.75rem; color: #718096; text-align: center;">
+            System Status: <span style="color: #38a169;">●</span> Operational
+            <br>v1.0.0
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Page routing - REMOVED st.rerun() from here
+    # Page routing
     if st.session_state.nav == "Home":
         show_home_page()
     elif st.session_state.nav == "Detection":
@@ -3857,6 +3875,7 @@ def main():
     else:
         st.warning("Page not found")
         st.session_state.nav = "Home"
+        st.rerun()
 
 if __name__ == "__main__":
     main()
