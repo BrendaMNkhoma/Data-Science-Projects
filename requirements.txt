@@ -1,27 +1,16 @@
-# Core AI/ML (Updated versions)
-tensorflow==2.10.0  # Downgraded to exact version that works with protobuf 3.20.x
-keras==2.10.0
-protobuf==3.20.3  # Now compatible with TF 2.10.0
-
-# Numeric Computing
-numpy==1.23.5
-scipy==1.9.3
-pandas==1.5.3
-
-# Image Processing
-Pillow==9.5.0
-opencv-python-headless==4.6.0.66  # Downgraded for stability
-
-# Visualization
-plotly==5.11.0
-matplotlib==3.6.3
-seaborn==0.12.2
-
-# Streamlit Ecosystem
+tensorflow==2.10.1
 streamlit==1.22.0
+pandas==1.5.3
+numpy==1.23.5
+plotly==5.11.0
+Pillow==9.4.0
+opencv-python-headless==4.6.0.66  # ⭐ Changed to headless version
 streamlit-aggrid==0.3.0
-
-# Utilities
-python-dotenv==0.21.0
+protobuf>=3.9.2,<3.20
+scikit-learn==1.1.3
+matplotlib==3.6.3
+scipy==1.9.3
 tqdm==4.64.1
-h5py==3.7.0  # Strictly required for TF 2.10
+seaborn==0.12.2
+python-dotenv==0.21.0
+h5py==3.7.0
