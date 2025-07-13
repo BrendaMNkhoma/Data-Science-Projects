@@ -61,6 +61,10 @@ def create_user(full_name, email, password, role='assistant'):
         conn.commit()
         return True
     except sqlite3.IntegrityError:
+        st.error("Email already exists")
+        return False
+    except Exception as e:
+        st.error(f"Error creating user: {str(e)}")
         return False
     finally:
         conn.close()
@@ -78,9 +82,9 @@ def approve_user(user_id, admin_id):
             WHERE id = ?
         ''', (admin_id, user_id))
         conn.commit()
-        return True
+        return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error approving user: {e}")
+        st.error(f"Error approving user: {str(e)}")
         return False
     finally:
         conn.close()
@@ -98,9 +102,9 @@ def reject_user(user_id, admin_id):
             WHERE id = ?
         ''', (admin_id, user_id))
         conn.commit()
-        return True
+        return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error rejecting user: {e}")
+        st.error(f"Error rejecting user: {str(e)}")
         return False
     finally:
         conn.close()
@@ -165,7 +169,7 @@ def create_session_token(user_id):
         conn.commit()
         return token
     except Exception as e:
-        print(f"Error creating session token: {e}")
+        st.error(f"Error creating session token: {str(e)}")
         return None
     finally:
         conn.close()
@@ -183,7 +187,7 @@ def validate_session_token(token):
         user = cursor.fetchone()
         return user
     except Exception as e:
-        print(f"Error validating session token: {e}")
+        st.error(f"Error validating session token: {str(e)}")
         return None
     finally:
         conn.close()
@@ -195,30 +199,57 @@ def delete_session_token(token):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
         conn.commit()
-        return True
+        return cursor.rowcount > 0
     except Exception as e:
-        print(f"Error deleting session token: {e}")
+        st.error(f"Error deleting session token: {str(e)}")
         return False
     finally:
         conn.close()
 
+def initialize_session_state():
+    """Initialize all required session state variables"""
+    required_keys = [
+        'logged_in', 'user_email', 'user_name', 
+        'user_role', 'user_id', 'nav', 'auth_token'
+    ]
+    
+    for key in required_keys:
+        if key not in st.session_state:
+            if key == 'logged_in':
+                st.session_state[key] = False
+            elif key == 'nav':
+                st.session_state[key] = "Home"
+            else:
+                st.session_state[key] = None
+
 def verify_session():
     """Verify and maintain session state across page refreshes"""
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
+    initialize_session_state()
     
-    # Check for existing session cookie
-    if not st.session_state.logged_in and 'auth_token' in st.session_state:
+    # Check for existing valid session token
+    if not st.session_state.logged_in and st.session_state.auth_token:
         user = validate_session_token(st.session_state.auth_token)
         if user:
-            st.session_state.logged_in = True
-            st.session_state.user_email = user[2]
-            st.session_state.user_name = user[1]
-            st.session_state.user_role = user[4]
-            st.session_state.user_id = user[0]
+            st.session_state.update({
+                'logged_in': True,
+                'user_email': user[2],
+                'user_name': user[1],
+                'user_role': user[4],
+                'user_id': user[0]
+            })
             return True
     
     return st.session_state.logged_in
+
+def safe_rerun(delay=1):
+    """Safe wrapper for st.rerun() with error handling"""
+    try:
+        time.sleep(delay)  # Give time for UI updates
+        st.experimental_rerun()
+    except Exception as e:
+        st.error(f"Navigation error: {str(e)}")
+        time.sleep(2)
+        st.experimental_rerun()
 
 def login_user(email, password):
     """Set session state after successful login"""
@@ -243,13 +274,16 @@ def login_user(email, password):
         st.error("Failed to create session")
         return False
     
-    # Set session state
-    st.session_state.logged_in = True
-    st.session_state.user_email = user[2]
-    st.session_state.auth_token = token
-    st.session_state.user_name = user[1]
-    st.session_state.user_role = user[4]
-    st.session_state.user_id = user[0]
+    # Initialize all session state
+    st.session_state.update({
+        'logged_in': True,
+        'user_email': user[2],
+        'auth_token': token,
+        'user_name': user[1],
+        'user_role': user[4],
+        'user_id': user[0],
+        'nav': 'Home'
+    })
     
     return True
 
@@ -257,8 +291,15 @@ def logout_user():
     """Clear session state on logout"""
     if 'auth_token' in st.session_state:
         delete_session_token(st.session_state.auth_token)
+    
+    # Reset session state but keep some navigation state
+    keep_keys = ['nav']
+    new_state = {k: st.session_state[k] for k in keep_keys if k in st.session_state}
+    
     st.session_state.clear()
+    st.session_state.update(new_state)
     st.session_state.logged_in = False
+    
 # -------------------------------
 # 🗄️ Database Initialization
 # -------------------------------
@@ -607,6 +648,7 @@ def init_database():
 if not init_database():
     st.error("Failed to initialize database. Please check the logs.")
     st.stop()
+    
 # 👥 Patient Management
 # -------------------------------
 def add_patient(full_name, gender, age, village, traditional_authority, district, marital_status):
@@ -1352,7 +1394,8 @@ def restore_message(message_id):
 # 🔐 Authentication UI
 # -------------------------------
 def show_auth_page():
-    """Show login/register interface with working switch"""
+    """Show login/register interface with robust session handling"""
+    # Custom CSS styling
     st.markdown("""
     <style>
     .auth-container {
@@ -1393,12 +1436,33 @@ def show_auth_page():
         font-size: 0.9rem;
         margin-top: 0.5rem;
     }
+    .stButton>button {
+        width: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-    # Initialize auth mode
+    # Initialize auth mode with session state
     if 'auth_mode' not in st.session_state:
         st.session_state.auth_mode = "login"
+    
+    # Initialize force_rerun flag if not exists
+    if 'force_rerun' not in st.session_state:
+        st.session_state.force_rerun = False
+
+    # Handle forced rerun if needed
+    if st.session_state.force_rerun:
+        st.session_state.force_rerun = False
+        time.sleep(0.5)  # Small delay to prevent infinite loops
+        st.experimental_rerun()
+
+    def safe_rerun():
+        """Safe navigation with error handling"""
+        try:
+            st.experimental_rerun()
+        except:
+            st.session_state.force_rerun = True
+            st.experimental_rerun()
 
     # Login Form
     if st.session_state.auth_mode == "login":
@@ -1407,28 +1471,27 @@ def show_auth_page():
             st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Sign in to your account</div>', unsafe_allow_html=True)
             
-            with st.form("login_form", clear_on_submit=False):
-                email = st.text_input("Email", placeholder="your@email.com").strip()
-                password = st.text_input("Password", type="password")
+            with st.form("login_form", clear_on_submit=True):
+                email = st.text_input("Email", placeholder="your@email.com", key="login_email").strip()
+                password = st.text_input("Password", type="password", key="login_password")
                 
-                login_button = st.form_submit_button("Sign In", type="primary", use_container_width=True)
-                
-                if login_button:
+                if st.form_submit_button("Sign In", type="primary", use_container_width=True):
                     if not email or not password:
                         st.error("Please enter both email and password", icon="⚠️")
                     else:
-                        if login_user(email, password):
-                            st.success("Login successful! Redirecting...")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Login failed - please try again", icon="🚨")
+                        with st.spinner("Authenticating..."):
+                            if login_user(email, password):
+                                st.success("Login successful! Redirecting...")
+                                time.sleep(1)  # Let user see success message
+                                safe_rerun()
+                            else:
+                                st.error("Login failed - please try again", icon="🚨")
 
             # Registration switch
             st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
             if st.button("Register here", key="to_register", use_container_width=True):
                 st.session_state.auth_mode = "register"
-                st.rerun()
+                safe_rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1439,42 +1502,44 @@ def show_auth_page():
             st.markdown('<div class="auth-title">Create Account</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Get started in seconds</div>', unsafe_allow_html=True)
             
-            with st.form("register_form", clear_on_submit=False):
-                full_name = st.text_input("Full Name", placeholder="John Doe").strip()
-                email = st.text_input("Email", placeholder="your@email.com").strip()
-                password = st.text_input("Password", type="password")
-                confirm_password = st.text_input("Confirm Password", type="password")
-                role = st.selectbox("Role", ["assistant", "doctor"])
+            with st.form("register_form", clear_on_submit=True):
+                full_name = st.text_input("Full Name", placeholder="John Doe", key="reg_name").strip()
+                email = st.text_input("Email", placeholder="your@email.com", key="reg_email").strip()
+                password = st.text_input("Password", type="password", key="reg_password")
+                confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm")
+                role = st.selectbox("Role", ["assistant", "doctor"], key="reg_role")
                 
-                register_button = st.form_submit_button("Register", type="primary", use_container_width=True)
-                
-                if register_button:
-                    if not all([full_name, email, password, confirm_password]):
-                        st.error("Please fill in all fields", icon="⚠️")
-                    elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                        st.error("Please enter a valid email address", icon="✉️")
-                    elif len(password) < 8:
-                        st.error("Password must be at least 8 characters", icon="🔒")
-                    elif password != confirm_password:
-                        st.error("Passwords don't match", icon="🔁")
-                    elif get_user_by_email(email):
-                        st.error("Email already registered", icon="⛔")
-                    else:
-                        if create_user(full_name, email, password, role):
-                            st.success("Registration submitted for admin approval", icon="✅")
-                            time.sleep(1)
-                            st.session_state.auth_mode = "login"
-                            st.rerun()
+                if st.form_submit_button("Register", type="primary", use_container_width=True):
+                    with st.spinner("Creating account..."):
+                        if not all([full_name, email, password, confirm_password]):
+                            st.error("Please fill in all fields", icon="⚠️")
+                        elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                            st.error("Please enter a valid email address", icon="✉️")
+                        elif len(password) < 8:
+                            st.error("Password must be at least 8 characters", icon="🔒")
+                        elif password != confirm_password:
+                            st.error("Passwords don't match", icon="🔁")
+                        elif get_user_by_email(email):
+                            st.error("Email already registered", icon="⛔")
                         else:
-                            st.error("Registration failed - please try again", icon="🚨")
+                            if create_user(full_name, email, password, role):
+                                st.success("Registration submitted for admin approval", icon="✅")
+                                time.sleep(1)
+                                st.session_state.auth_mode = "login"
+                                safe_rerun()
+                            else:
+                                st.error("Registration failed - please try again", icon="🚨")
 
             # Login switch
             st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
             if st.button("Sign in here", key="to_login", use_container_width=True):
                 st.session_state.auth_mode = "login"
-                st.rerun()
+                safe_rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
+
+    # Add a small delay to prevent rapid reruns
+    time.sleep(0.1)
 
 # -------------------------------
 # 🏠 Home Page
@@ -3612,11 +3677,11 @@ def _confirm_delete_model(model_id):
     return False
 
 # -------------------------------
-# 🧭 Main Navigation
+# 🧭 Enhanced Main Navigation
 # -------------------------------
 def main():
-    """Main application entry point"""
-    # Set page config (MUST BE FIRST STREAMLIT COMMAND)
+    """Main application entry point with robust error handling"""
+    # Set page config (must be first Streamlit command)
     st.set_page_config(
         page_title="Munthandiz Cataract Detection",
         page_icon="👁️",
@@ -3624,213 +3689,38 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Then load custom CSS
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
-
-    html, body, [class*="css"] {
-        font-family: 'Open Sans', sans-serif;
-        font-size: 14px;
-        line-height: 1.5;
-        font-weight: 400;
-        color: #2d3748;
-    }
-
-    .main-title, .section-title, .hero-title, .step-title {
-        font-family: 'Playfair Display', serif;
-    }
-
-    .main {
-        background: linear-gradient(135deg, #98F5E1 0%, #B8F5D1 50%, #D1F5E8 100%);
-        min-height: 100vh;
-        background-image: url('https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?auto=format&fit=crop&w=1920&q=80');
-        background-size: cover;
-        background-attachment: fixed;
-        background-position: center;
-        background-blend-mode: overlay;
-    }
-    .block-container {
-        padding: 1.5rem 2rem;
-        max-width: 1200px;
-        margin: 0 auto;
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(8px);
-        border-radius: 16px;
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        transition: all 0.3s ease;
-    }
-    .block-container:hover {
-        background: rgba(255, 255, 255, 0.85);
-    }
-
-    /* Titles */
-    .main-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #2d3748;
-        text-align: center;
-        margin-bottom: 0.75rem;
-        letter-spacing: -0.5px;
-    }
-    .subtitle {
-        font-size: 1.1rem;
-        font-weight: 500;
-        color: #4a5568;
-        text-align: center;
-        margin-bottom: 2rem;
-        letter-spacing: 0.25px;
-    }
-    .section-title {
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: #2d3748;
-        margin: 2rem 0 1rem;
-        padding-bottom: 0.5rem;
-        border-bottom: 2px solid #B3B9B6FF;
-        position: relative;
-    }
-    .section-title::after {
-        content: '';
-        position: absolute;
-        bottom: -2px;
-        left: 0;
-        width: 40px;
-        height: 2px;
-        background: #38a169;
-    }
-
-    /* Card Styling */
-    .feature-card {
-        background: rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(8px);
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-        border: 1px solid rgba(255, 255, 255, 0.4);
-        margin-bottom: 1.25rem;
-        transition: all 0.3s ease;
-        position: relative;
-    }
-    .feature-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-    }
-    .feature-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 3px;
-        background: linear-gradient(90deg, #48bb78, #38a169);
-    }
-
-    /* Metric Card */
-    .metric-card {
-        background: rgba(255, 255, 255, 0.85);
-        backdrop-filter: blur(8px);
-        padding: 1.25rem;
-        border-radius: 12px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-        text-align: center;
-        transition: all 0.3s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-    }
-    .metric-title {
-        font-size: 0.8rem;
-        font-weight: 600;
-        color: #718096;
-        margin-bottom: 0.4rem;
-    }
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, #48bb78, #38a169);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        line-height: 1;
-    }
-
-    /* Status Tags */
-    .status-success, .status-error, .status-warning {
-        font-family: 'Open Sans', sans-serif;
-        padding: 0.6rem 1.2rem;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.9rem;
-        text-align: center;
-        margin: 0.75rem 0;
-        color: white;
-    }
-    .status-success {
-        background: linear-gradient(135deg, #48bb78, #38a169);
-    }
-    .status-error {
-        background: linear-gradient(135deg, #f56565, #e53e3e);
-    }
-    .status-warning {
-        background: linear-gradient(135deg, #ed8936, #dd6b20);
-    }
-
-    /* Buttons */
-    .stButton > button, .stDownloadButton > button {
-        font-family: 'Open Sans', sans-serif !important;
-        background: linear-gradient(135deg, #48bb78, #38a169) !important;
-        color: white !important;
-        border-radius: 8px !important;
-        font-size: 0.9rem !important;
-        font-weight: 600 !important;
-        padding: 0.6rem 1.5rem !important;
-        box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3) !important;
-        transition: all 0.3s ease !important;
-    }
-    .stButton > button:hover, .stDownloadButton > button:hover {
-        transform: translateY(-1px) !important;
-        box-shadow: 0 4px 16px rgba(72, 187, 120, 0.4) !important;
-    }
-
-    /* Animations */
-    .fade-in {
-        animation: fadeIn 0.8s ease-in;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    .slide-up {
-        animation: slideUp 0.6s ease-out;
-    }
-    @keyframes slideUp {
-        from { opacity: 0; transform: translateY(30px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Initialize critical session variables
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
+    if 'force_rerun' not in st.session_state:
+        st.session_state.force_rerun = False
+    
+    # Load custom CSS
+    load_custom_styles()
+    
+    # Safe rerun function with error handling
+    def safe_rerun(delay=0.5):
+        """Handle page reruns safely with error recovery"""
+        try:
+            time.sleep(delay)
+            st.experimental_rerun()
+        except Exception as e:
+            st.session_state.force_rerun = True
+            st.experimental_rerun()
     
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
     
-    # Initialize navigation state
-    if 'nav' not in st.session_state:
-        st.session_state.nav = "Home"
+    # Handle forced rerun if needed
+    if st.session_state.force_rerun:
+        st.session_state.force_rerun = False
+        safe_rerun()
     
     # Sidebar navigation
     with st.sidebar:
-        st.markdown(f"""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #2d3748;">Munthandiz</h1>
-            <div style="font-size: 0.9rem; color: #4a5568;">Cataract Detection System</div>
-            <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">Welcome, {st.session_state.user_name}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        render_sidebar_header()
         
         # Navigation menu
         menu_options = {
@@ -3849,41 +3739,141 @@ def main():
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.rerun()
+                safe_rerun()
         
         # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            st.rerun()
+            st.session_state.nav = "Home"
+            safe_rerun()
         
         # System status
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("""
-        <div style="font-size: 0.75rem; color: #718096; text-align: center;">
-            System Status: <span style="color: #38a169;">●</span> Operational
-            <br>v1.0.0
-        </div>
-        """, unsafe_allow_html=True)
+        render_sidebar_footer()
     
-    # Page routing
-    if st.session_state.nav == "Home":
-        show_home_page()
-    elif st.session_state.nav == "Detection":
-        show_detection_page()
-    elif st.session_state.nav == "Appointments":
-        show_appointments_page()
-    elif st.session_state.nav == "Analytics":
-        show_analytics_page()
-    elif st.session_state.nav == "Messages":
-        show_messages_page()
-    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
-        show_admin_panel()
-    else:
-        st.warning("Page not found")
+    # Page routing with error handling
+    try:
+        if st.session_state.nav == "Home":
+            show_home_page()
+        elif st.session_state.nav == "Detection":
+            show_detection_page()
+        elif st.session_state.nav == "Appointments":
+            show_appointments_page()
+        elif st.session_state.nav == "Analytics":
+            show_analytics_page()
+        elif st.session_state.nav == "Messages":
+            show_messages_page()
+        elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
+            show_admin_panel()
+        else:
+            st.warning("Page not found")
+            st.session_state.nav = "Home"
+            safe_rerun()
+            
+    except Exception as e:
+        handle_main_error(e)
+
+def load_custom_styles():
+    """Load all custom CSS styles"""
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
+    
+    /* Base styles */
+    html, body, [class*="css"] {
+        font-family: 'Open Sans', sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        font-weight: 400;
+        color: #2d3748;
+    }
+    
+    /* Title styles */
+    .main-title, .section-title, .hero-title, .step-title {
+        font-family: 'Playfair Display', serif;
+    }
+    
+    /* Container styles */
+    .block-container {
+        padding: 1.5rem 2rem;
+        max-width: 1200px;
+        margin: 0 auto;
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(8px);
+        border-radius: 16px;
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        transition: all 0.3s ease;
+    }
+    .block-container:hover {
+        background: rgba(255, 255, 255, 0.85);
+    }
+    
+    /* Additional styles... */
+    </style>
+    """, unsafe_allow_html=True)
+
+def render_sidebar_header():
+    """Render the sidebar header with user info"""
+    st.markdown(f"""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #2d3748;">Munthandiz</h1>
+        <div style="font-size: 0.9rem; color: #4a5568;">Cataract Detection System</div>
+        <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">
+            Welcome, {st.session_state.get('user_name', 'Guest')}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_sidebar_footer():
+    """Render the sidebar footer with system status"""
+    st.markdown("""
+    <div style="font-size: 0.75rem; color: #718096; text-align: center;">
+        System Status: <span style="color: #38a169;">●</span> Operational
+        <br>v1.0.0
+    </div>
+    """, unsafe_allow_html=True)
+
+def handle_main_error(error):
+    """Handle errors in the main application flow"""
+    st.error(f"Application error: {str(error)}")
+    st.warning("The application will attempt to recover...")
+    
+    # Reset to safe state
+    if 'nav' not in st.session_state:
         st.session_state.nav = "Home"
-        st.rerun()
+    
+    # Add recovery button
+    if st.button("Reload Application"):
+        st.session_state.force_rerun = True
+        st.experimental_rerun()
+    
+    # Log the error
+    log_error(error)
+
+def log_error(error):
+    """Log errors to the database"""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO system_logs 
+            (level, message, user_id)
+            VALUES (?, ?, ?)
+        ''', (
+            'ERROR',
+            str(error),
+            st.session_state.get('user_id', None)
+        ))
+        conn.commit()
+    except Exception as e:
+        print(f"Failed to log error: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == "__main__":
     main()
