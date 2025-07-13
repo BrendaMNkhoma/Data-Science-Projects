@@ -259,7 +259,6 @@ def logout_user():
         delete_session_token(st.session_state.auth_token)
     st.session_state.clear()
     st.session_state.logged_in = False
-
 # -------------------------------
 # 🗄️ Database Initialization
 # -------------------------------
@@ -328,8 +327,6 @@ def init_database():
                         confidence REAL NOT NULL,
                         attended_by TEXT NOT NULL,
                         notes TEXT,
-                        image_path TEXT,
-                        last_updated TIMESTAMP,
                         FOREIGN KEY (patient_id) REFERENCES patients(id)
                     )
                 ''')
@@ -497,63 +494,62 @@ def init_database():
                 raise Exception(f"Migration 4 failed: {str(e)}")
         
         # Migration 5: Enhance detections and add audit logs (v5)
-if current_version < 5:
-    try:
-        # Start transaction
-        cursor.execute("BEGIN TRANSACTION")
-        
-        # Check existing columns
-        cursor.execute("PRAGMA table_info(detections)")
-        existing_columns = [col[1] for col in cursor.fetchall()]
-        
-        # Add image_path if not exists
-        if 'image_path' not in existing_columns:
-            cursor.execute('''
-                ALTER TABLE detections 
-                ADD COLUMN image_path TEXT
-            ''')
-        
-        # Add last_updated if not exists
-        if 'last_updated' not in existing_columns:
-            cursor.execute('''
-                ALTER TABLE detections 
-                ADD COLUMN last_updated TIMESTAMP
-            ''')
-        
-        # Create detection logs table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS detection_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                patient_id INTEGER,
-                detection_id INTEGER NOT NULL,
-                action TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (patient_id) REFERENCES patients(id),
-                FOREIGN KEY (detection_id) REFERENCES detections(id)
-            )
-        ''')
-        
-        # Add indexes for performance
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_detections_patient_id 
-            ON detections(patient_id)
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_detections_date 
-            ON detections(detection_date)
-        ''')
-        
-        # Record migration
-        cursor.execute("INSERT INTO migrations (version) VALUES (5)")
-        conn.commit()
-        current_version = 5
-        
-    except Exception as e:
-        conn.rollback()
-        raise Exception(f"Migration 5 failed: {str(e)}")
+        if current_version < 5:
+            try:
+                # Start transaction
+                cursor.execute("BEGIN TRANSACTION")
+                
+                # Check existing columns
+                cursor.execute("PRAGMA table_info(detections)")
+                existing_columns = [col[1] for col in cursor.fetchall()]
+                
+                # Add image_path if not exists
+                if 'image_path' not in existing_columns:
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN image_path TEXT
+                    ''')
+                
+                # Add last_updated if not exists
+                if 'last_updated' not in existing_columns:
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN last_updated TIMESTAMP
+                    ''')
+                
+                # Create detection logs table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS detection_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        patient_id INTEGER,
+                        detection_id INTEGER NOT NULL,
+                        action TEXT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id),
+                        FOREIGN KEY (patient_id) REFERENCES patients(id),
+                        FOREIGN KEY (detection_id) REFERENCES detections(id)
+                    )
+                ''')
+                
+                # Add indexes for performance
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_detections_patient_id 
+                    ON detections(patient_id)
+                ''')
+                
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_detections_date 
+                    ON detections(detection_date)
+                ''')
+                
+                # Record migration
+                cursor.execute("INSERT INTO migrations (version) VALUES (5)")
+                conn.commit()
+                current_version = 5
+            except Exception as e:
+                conn.rollback()
+                raise Exception(f"Migration 5 failed: {str(e)}")
         
         # Migration 6: Create useful views (v6)
         if current_version < 6:
@@ -611,7 +607,6 @@ if current_version < 5:
 if not init_database():
     st.error("Failed to initialize database. Please check the logs.")
     st.stop()
-        
 # 👥 Patient Management
 # -------------------------------
 def add_patient(full_name, gender, age, village, traditional_authority, district, marital_status):
