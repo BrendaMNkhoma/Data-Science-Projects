@@ -3395,7 +3395,7 @@ def _display_model_management():
         st.info("No model versions found in the system")
 
 def _handle_model_upload(model_file, version, description, release_notes):
-    """Process model upload with version compatibility handling"""
+    """Enhanced model upload handler with advanced compatibility checks"""
     try:
         # Validate version format
         if not re.match(r'^\d+\.\d+\.\d+$', version):
@@ -3412,53 +3412,87 @@ def _handle_model_upload(model_file, version, description, release_notes):
         with open(temp_path, "wb") as f:
             f.write(model_file.getbuffer())
         
-        # Try standard load first
-        model = None
-        compatibility_mode = "standard"
-        
-        try:
-            model = load_model(temp_path)
-        except Exception as e:
-            # Fall back to custom objects if standard load fails
-            try:
-                model = load_model(
-                    temp_path,
-                    custom_objects={
+        # Try multiple loading strategies
+        loading_attempts = [
+            {
+                "name": "Standard load",
+                "kwargs": {}
+            },
+            {
+                "name": "Custom objects with legacy Adam",
+                "kwargs": {
+                    "custom_objects": {
+                        'Functional': tf.keras.models.Model,
+                        'Adam': tf.keras.optimizers.legacy.Adam
+                    },
+                    "compile": False
+                }
+            },
+            {
+                "name": "Custom objects with all legacy optimizers",
+                "kwargs": {
+                    "custom_objects": {
                         'Functional': tf.keras.models.Model,
                         'Adam': tf.keras.optimizers.legacy.Adam,
-                        'batch_shape': None  # Handle the specific error you encountered
+                        'Adadelta': tf.keras.optimizers.legacy.Adadelta,
+                        'Adagrad': tf.keras.optimizers.legacy.Adagrad,
+                        'Adamax': tf.keras.optimizers.legacy.Adamax,
+                        'Ftrl': tf.keras.optimizers.legacy.Ftrl,
+                        'Nadam': tf.keras.optimizers.legacy.Nadam,
+                        'RMSprop': tf.keras.optimizers.legacy.RMSprop,
+                        'SGD': tf.keras.optimizers.legacy.SGD
                     },
-                    compile=False
-                )
-                compatibility_mode = "custom_objects"
-            except Exception as fallback_e:
-                temp_path.unlink(missing_ok=True)
-                raise ValueError(
-                    f"Model loading failed with both standard and fallback methods:\n"
-                    f"Standard error: {str(e)}\n"
-                    f"Fallback error: {str(fallback_e)}"
-                )
+                    "compile": False
+                }
+            },
+            {
+                "name": "Skip incompatible layers",
+                "kwargs": {
+                    "custom_objects": {
+                        'Functional': tf.keras.models.Model,
+                        'batch_shape': None,
+                        '_tf_api_names': None,
+                        '_keras_api_names': None
+                    },
+                    "compile": False
+                }
+            }
+        ]
+        
+        model = None
+        compatibility_mode = "unknown"
+        load_errors = []
+        
+        for attempt in loading_attempts:
+            try:
+                st.write(f"Attempting {attempt['name']}...")
+                model = load_model(temp_path, **attempt['kwargs'])
+                compatibility_mode = attempt['name']
+                break
+            except Exception as e:
+                load_errors.append(f"{attempt['name']} failed: {str(e)}")
+                continue
+        
+        if model is None:
+            temp_path.unlink(missing_ok=True)
+            error_msg = "All loading attempts failed:\n" + "\n".join(load_errors)
+            raise ValueError(error_msg)
         
         # Validate model structure
-        if not hasattr(model, 'predict'):
-            temp_path.unlink(missing_ok=True)
-            raise ValueError("Uploaded file is not a valid Keras model (missing predict method)")
+        validation_checks = [
+            (hasattr(model, 'predict'), "Model missing predict method"),
+            (hasattr(model, 'input_shape'), "Model missing input_shape"),
+            (hasattr(model, 'output_shape'), "Model missing output_shape"),
+            (model.input_shape[1:] == (*MODEL_INPUT_SIZE, 3), 
+             f"Model expects input shape {model.input_shape[1:]}, system requires {(*MODEL_INPUT_SIZE, 3)}"),
+            (model.output_shape[1] == len(CLASS_NAMES),
+             f"Model has {model.output_shape[1]} outputs, expected {len(CLASS_NAMES)}")
+        ]
         
-        # Verify model matches expected input/output
-        expected_input_shape = (*MODEL_INPUT_SIZE, 3)
-        if model.input_shape[1:] != expected_input_shape:
-            temp_path.unlink(missing_ok=True)
-            raise ValueError(
-                f"Model expects input shape {model.input_shape[1:]}, "
-                f"but system requires {expected_input_shape}"
-            )
-        
-        if model.output_shape[1] != len(CLASS_NAMES):
-            temp_path.unlink(missing_ok=True)
-            raise ValueError(
-                f"Model has {model.output_shape[1]} outputs "
-                f"but expected {len(CLASS_NAMES)} classes"
-            )
+        for check, error_msg in validation_checks:
+            if not check:
+                temp_path.unlink(missing_ok=True)
+                raise ValueError(error_msg)
         
         # If validation passed, save to final location
         model_filename = f"model_v{version.replace('.', '_')}.h5"
@@ -3487,7 +3521,9 @@ def _handle_model_upload(model_file, version, description, release_notes):
                     "parameters": model.count_params(),
                     "compatibility": compatibility_mode,
                     "layers": len(model.layers),
-                    "upload_timestamp": datetime.now().isoformat()
+                    "loading_attempts": load_errors,
+                    "upload_timestamp": datetime.now().isoformat(),
+                    "tensorflow_version": tf.__version__
                 })
             ))
             
@@ -3499,7 +3535,7 @@ def _handle_model_upload(model_file, version, description, release_notes):
             
             conn.commit()
             
-            st.success(f"Model v{version} deployed successfully!")
+            st.success(f"Model v{version} deployed successfully using {compatibility_mode}!")
             st.balloons()
             time.sleep(1)
             st.experimental_rerun()
@@ -3514,11 +3550,12 @@ def _handle_model_upload(model_file, version, description, release_notes):
             
     except Exception as e:
         st.error(f"🚨 Upload failed: {str(e)}")
+        st.info("💡 Try exporting your model with: `model.save('model.keras', save_format='tf')`")
         if 'temp_path' in locals() and temp_path.exists():
             temp_path.unlink(missing_ok=True)
         if 'model_path' in locals() and model_path.exists():
             model_path.unlink(missing_ok=True)
-
+            
 def delete_model_version(model_id):
     """Safely delete a model version with confirmation"""
     conn = None
