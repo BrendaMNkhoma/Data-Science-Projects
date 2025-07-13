@@ -3289,61 +3289,88 @@ def _delete_user(user_id):
 # 🤖 Model Management Functions
 # -------------------------------
 def _display_model_management():
-    """Display model management interface"""
+    """Display model management interface with improved error handling"""
     st.markdown("## Model Management")
     
-    # Current active model
-    current_model = get_active_model_info()
-    if current_model:
-        st.markdown(f"""
-        **Active Model:**  
-        Version: {current_model['version']}  
-        Description: {current_model['description']}  
-        Uploaded: {current_model['upload_date']} by {current_model['uploaded_by']}
-        """)
-    
-    # Model upload form
-    with st.expander("Upload New Model", expanded=False):
-        with st.form("model_upload_form"):
-            new_model = st.file_uploader("Model file (.h5)", type=["h5"])
-            version = st.text_input("Version* (e.g., 1.0.0)")
-            description = st.text_area("Description")
-            release_notes = st.text_area("Release Notes")
+    # Current active model display
+    with st.container():
+        current_model = get_active_model_info()
+        if current_model:
+            st.markdown(f"""
+            <div class="model-info-card">
+                <h3>Active Model Information</h3>
+                <p><strong>Version:</strong> {current_model.get('version', 'N/A')}</p>
+                <p><strong>Description:</strong> {current_model.get('description', 'N/A')}</p>
+                <p><strong>Uploaded by:</strong> {current_model.get('uploaded_by', 'N/A')}</p>
+                <p><strong>Upload date:</strong> {current_model.get('upload_date', 'N/A')}</p>
+                <p><strong>Compatibility:</strong> {current_model.get('compatibility', 'standard')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.warning("No active model configured")
+
+    # Model upload form with enhanced validation
+    with st.expander("📤 Upload New Model", expanded=False):
+        with st.form("model_upload_form", clear_on_submit=True):
+            new_model = st.file_uploader("Model file (.h5 or .keras)", 
+                                       type=["h5", "keras"],
+                                       help="Upload trained model in HDF5 or Keras format")
             
-            if st.form_submit_button("Deploy Model"):
+            version = st.text_input("Version* (e.g., 1.0.0)", 
+                                  help="Use semantic versioning format")
+            
+            description = st.text_area("Description",
+                                     help="Brief description of model purpose and features")
+            
+            release_notes = st.text_area("Release Notes",
+                                       help="What's new or changed in this version")
+            
+            if st.form_submit_button("🚀 Deploy Model", type="primary"):
                 if new_model and version:
-                    _handle_model_upload(new_model, version, description, release_notes)
+                    with st.spinner("Validating and deploying model..."):
+                        _handle_model_upload(new_model, version, description, release_notes)
                 else:
                     st.warning("Please provide both model file and version number")
-    
-    # Model history with delete
-    st.markdown("## Model Versions")
+
+    # Model history with enhanced delete confirmation
+    st.markdown("## Model Versions History")
     models = _get_model_history()
     
     if not models.empty:
-        # Add delete action column
-        models['Delete'] = "Delete"
-        
+        # Configure interactive grid
         gb = GridOptionsBuilder.from_dataframe(models)
-        gb.configure_default_column(filterable=True, sortable=True)
+        gb.configure_default_column(
+            filterable=True,
+            sortable=True,
+            resizable=True
+        )
+        
+        gb.configure_column("version", header_name="Version")
+        gb.configure_column("uploaded_at", header_name="Upload Date")
+        gb.configure_column("uploaded_by", header_name="Uploaded By")
         gb.configure_column("is_active", header_name="Active", width=100)
-        gb.configure_column("Delete", 
-                          cellRenderer="deleteButton",
-                          width=120,
-                          pinned="right")
+        
+        # Add delete action with confirmation
+        gb.configure_column(
+            "Delete",
+            cellRenderer="""
+                <button onclick="alert('Are you sure?') || 
+                                window.parent.postMessage(
+                                    {type: 'deleteModel', modelId: params.data.id}, 
+                                    '*'
+                                )"
+                        style="color: white; background-color: #ff4b4b; 
+                               border: none; border-radius: 3px; padding: 2px 8px;">
+                    Delete
+                </button>
+            """,
+            width=120,
+            pinned="right"
+        )
         
         grid_options = gb.build()
-        grid_options['components'] = {
-            'deleteButton': {
-                'template': '''
-                    <button onclick="deleteModel(params.data.id)" 
-                            style="color: white; background-color: #ff4b4b; border: none; border-radius: 3px; padding: 2px 8px;">
-                        Delete
-                    </button>
-                '''
-            }
-        }
         
+        # Display the grid
         grid_response = AgGrid(
             models,
             gridOptions=grid_options,
@@ -3351,96 +3378,184 @@ def _display_model_management():
             width='100%',
             theme='streamlit',
             update_mode=GridUpdateMode.MODEL_CHANGED,
-            allow_unsafe_jscode=True
+            allow_unsafe_jscode=True,
+            key='models_grid'
         )
         
         # Handle delete actions
-        if 'clicks' in st.session_state and st.session_state.clicks:
-            model_id = st.session_state.clicks[0]
+        if 'deleteModel' in st.session_state:
+            model_id = st.session_state.deleteModel
             if _confirm_delete_model(model_id):
                 if delete_model_version(model_id):
-                    st.success("Model version deleted")
+                    st.success("Model version deleted successfully!")
+                    del st.session_state.deleteModel
                     time.sleep(1)
-                    st.rerun()
+                    st.experimental_rerun()
     else:
-        st.info("No model versions found")
+        st.info("No model versions found in the system")
 
 def _handle_model_upload(model_file, version, description, release_notes):
-    """Process model upload"""
+    """Process model upload with version compatibility handling"""
     try:
-        # Validate version
+        # Validate version format
         if not re.match(r'^\d+\.\d+\.\d+$', version):
-            raise ValueError("Use semantic versioning (e.g., 1.0.0)")
+            raise ValueError("Use semantic versioning format (e.g., 1.0.0)")
         
         # Create models directory
         models_dir = REPO_ROOT / MODELS_DIR
         models_dir.mkdir(exist_ok=True)
         
-        # Save model file
-        model_filename = f"model_v{version.replace('.', '_')}.h5"
-        model_path = models_dir / model_filename
+        # Save to temporary file first
+        temp_ext = os.path.splitext(model_file.name)[1]
+        temp_path = models_dir / f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}{temp_ext}"
         
-        with open(model_path, "wb") as f:
+        with open(temp_path, "wb") as f:
             f.write(model_file.getbuffer())
         
-        # Validate model
+        # Try standard load first
+        model = None
+        compatibility_mode = "standard"
+        
         try:
-            test_model = load_model(model_path)
-            input_shape = test_model.input_shape
-            del test_model
+            model = load_model(temp_path)
         except Exception as e:
-            os.remove(model_path)
-            raise ValueError(f"Invalid model: {str(e)}")
+            # Fall back to custom objects if standard load fails
+            try:
+                model = load_model(
+                    temp_path,
+                    custom_objects={
+                        'Functional': tf.keras.models.Model,
+                        'Adam': tf.keras.optimizers.legacy.Adam,
+                        'batch_shape': None  # Handle the specific error you encountered
+                    },
+                    compile=False
+                )
+                compatibility_mode = "custom_objects"
+            except Exception as fallback_e:
+                temp_path.unlink(missing_ok=True)
+                raise ValueError(
+                    f"Model loading failed with both standard and fallback methods:\n"
+                    f"Standard error: {str(e)}\n"
+                    f"Fallback error: {str(fallback_e)}"
+                )
+        
+        # Validate model structure
+        if not hasattr(model, 'predict'):
+            temp_path.unlink(missing_ok=True)
+            raise ValueError("Uploaded file is not a valid Keras model (missing predict method)")
+        
+        # Verify model matches expected input/output
+        expected_input_shape = (*MODEL_INPUT_SIZE, 3)
+        if model.input_shape[1:] != expected_input_shape:
+            temp_path.unlink(missing_ok=True)
+            raise ValueError(
+                f"Model expects input shape {model.input_shape[1:]}, "
+                f"but system requires {expected_input_shape}"
+            )
+        
+        if model.output_shape[1] != len(CLASS_NAMES):
+            temp_path.unlink(missing_ok=True)
+            raise ValueError(
+                f"Model has {model.output_shape[1]} outputs "
+                f"but expected {len(CLASS_NAMES)} classes"
+            )
+        
+        # If validation passed, save to final location
+        model_filename = f"model_v{version.replace('.', '_')}.h5"
+        model_path = models_dir / model_filename
+        os.rename(temp_path, model_path)
         
         # Store in database
         conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO model_versions 
-            (version, description, release_notes, path, uploaded_by, performance_metrics)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            version,
-            description,
-            release_notes,
-            str(model_path.relative_to(REPO_ROOT)),
-            st.session_state.user_id,
-            json.dumps({"input_shape": str(input_shape)})
-        ))
-        
-        # Set as active
-        cursor.execute('''
-            INSERT OR REPLACE INTO system_settings 
-            (key, value) VALUES ('active_model', ?)
-        ''', (str(model_path.relative_to(REPO_ROOT)),))
-        
-        conn.commit()
-        st.success(f"Model v{version} deployed!")
-        st.balloons()
-        st.rerun()
-        
+        try:
+            cursor = conn.cursor()
+            
+            # Insert model record
+            cursor.execute('''
+                INSERT INTO model_versions 
+                (version, description, release_notes, path, uploaded_by, performance_metrics)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                version,
+                description,
+                release_notes,
+                str(model_path.relative_to(REPO_ROOT)),
+                st.session_state.user_id,
+                json.dumps({
+                    "input_shape": str(model.input_shape),
+                    "output_shape": str(model.output_shape),
+                    "parameters": model.count_params(),
+                    "compatibility": compatibility_mode,
+                    "layers": len(model.layers),
+                    "upload_timestamp": datetime.now().isoformat()
+                })
+            ))
+            
+            # Set as active model
+            cursor.execute('''
+                INSERT OR REPLACE INTO system_settings 
+                (key, value) VALUES ('active_model', ?)
+            ''', (str(model_path.relative_to(REPO_ROOT)),))
+            
+            conn.commit()
+            
+            st.success(f"Model v{version} deployed successfully!")
+            st.balloons()
+            time.sleep(1)
+            st.experimental_rerun()
+            
+        except sqlite3.Error as e:
+            conn.rollback()
+            model_path.unlink(missing_ok=True)
+            raise ValueError(f"Database error: {str(e)}")
+            
+        finally:
+            conn.close()
+            
     except Exception as e:
-        st.error(f"Upload failed: {str(e)}")
+        st.error(f"🚨 Upload failed: {str(e)}")
+        if 'temp_path' in locals() and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
         if 'model_path' in locals() and model_path.exists():
-            model_path.unlink()
+            model_path.unlink(missing_ok=True)
 
 def delete_model_version(model_id):
-    """Hard delete a model version"""
+    """Safely delete a model version with confirmation"""
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
-        # Get model path first
-        cursor.execute("SELECT path FROM model_versions WHERE id = ?", (model_id,))
-        model_path = cursor.fetchone()[0]
+        # Get model info first
+        cursor.execute('''
+            SELECT path, version FROM model_versions 
+            WHERE id = ?
+        ''', (model_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            raise ValueError("Model not found")
+            
+        model_path, version = result
         abs_path = REPO_ROOT / model_path
         
-        # Delete from database
-        cursor.execute("DELETE FROM model_versions WHERE id = ?", (model_id,))
+        # Check if this is the active model
+        cursor.execute('''
+            SELECT value FROM system_settings 
+            WHERE key = 'active_model'
+        ''')
+        active_path = cursor.fetchone()
         
-        # Delete file
+        if active_path and active_path[0] == model_path:
+            raise ValueError("Cannot delete the active model. Set another model as active first.")
+        
+        # Delete from database
+        cursor.execute('''
+            DELETE FROM model_versions 
+            WHERE id = ?
+        ''', (model_id,))
+        
+        # Delete the file if exists
         if abs_path.exists():
             abs_path.unlink()
         
@@ -3450,11 +3565,25 @@ def delete_model_version(model_id):
     except Exception as e:
         if conn:
             conn.rollback()
-        st.error(f"Delete failed: {str(e)}")
+        st.error(f"Failed to delete model v{version if 'version' in locals() else 'unknown'}: {str(e)}")
         return False
+        
     finally:
         if conn:
             conn.close()
+
+def _confirm_delete_model(model_id):
+    """Confirmation dialog for model deletion"""
+    with st.container():
+        st.warning("⚠️ Are you sure you want to permanently delete this model version?")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm Delete", type="primary"):
+                return True
+        with col2:
+            if st.button("❌ Cancel"):
+                return False
+    return False
 
 # -------------------------------
 # ⚙️ System Settings Functions
