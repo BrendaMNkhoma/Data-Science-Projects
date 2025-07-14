@@ -4293,7 +4293,7 @@ def _confirm_delete_model(model_id):
 # 🧭 Main Navigation
 # -------------------------------
 def main():
-    """Main application entry point with robust session management"""
+    """Main application entry point"""
     # Set page config (MUST BE FIRST STREAMLIT COMMAND)
     st.set_page_config(
         page_title="Munthandiz Cataract Detection",
@@ -4302,13 +4302,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize critical session state variables
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = True
-        st.session_state.nav = "Home"
-        st.session_state.rerun_count = 0  # Track rerun attempts
-
-        # Then load custom CSS
+    # Then load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
@@ -4496,23 +4490,23 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-    # Verify and maintain session state with error handling
-    try:
-        if not verify_session():
-            show_auth_page()
-            return
-    except Exception as e:
-        st.error("Session verification failed. Please refresh the page.")
-        print(f"Session verification error: {str(e)}")
+    
+    # Initialize session state for navigation if not exists
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
+    
+    # Verify and maintain session state
+    if not verify_session():
+        show_auth_page()
         return
-
-    # Sidebar navigation with improved state management
+    
+    # Sidebar navigation
     with st.sidebar:
         st.markdown(f"""
         <div style="text-align: center; margin-bottom: 2rem;">
             <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #98F5E1 0%;">Munthandiz</h1>
             <div style="font-size: 0.9rem; color: #98F5E1 0%;">Cataract Detection System</div>
-            <div style="margin-top: 1rem; font-size: 0.8rem; color: #98F5E1 0%;">Welcome, {st.session_state.get('user_name', 'Guest')}</div>
+            <div style="margin-top: 1rem; font-size: 0.8rem; color: #98F5E1 0%;">Welcome, {st.session_state.user_name}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -4526,62 +4520,53 @@ def main():
         }
         
         # Add admin panel if user is admin
-        if st.session_state.get('user_role') == "admin":
+        if st.session_state.user_role == "admin":
             menu_options["⚙️ Admin"] = "Admin"
         
-        # Create navigation buttons with controlled reruns
+        # Create navigation buttons
         for label, page in menu_options.items():
-            if st.button(label, key=f"nav_{page}", use_container_width=True):
+            if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                st.session_state.rerun_count += 1
-                if st.session_state.rerun_count < 3:  # Prevent infinite reruns
-                    st.experimental_rerun()
-        
-        # Logout button with proper cleanup
-        if st.button("🚪 Logout", use_container_width=True):
-            try:
-                logout_user()
-                st.session_state.clear()
+                # Use experimental_rerun instead of rerun
                 st.experimental_rerun()
-            except Exception as e:
-                st.error("Logout failed. Please try again.")
-                print(f"Logout error: {str(e)}")
+        
+        # Logout button
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
+            logout_user()
+            st.session_state.clear()
+            # Use experimental_rerun instead of rerun
+            st.experimental_rerun()
         
         # System status
-        st.markdown("---")
-        st.markdown("""
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
         <div style="font-size: 0.75rem; color: #718096; text-align: center;">
             System Status: <span style="color: #38a169;">●</span> Operational
             <br>v1.0.0
         </div>
         """, unsafe_allow_html=True)
     
-    # Page routing with error handling
-    try:
-        current_page = st.session_state.get('nav', 'Home')
-        
-        if current_page == "Home":
+    # Page routing - using a function to avoid rerun issues
+    def render_page():
+        if st.session_state.nav == "Home":
             show_home_page()
-        elif current_page == "Detection":
+        elif st.session_state.nav == "Detection":
             show_detection_page()
-        elif current_page == "Appointments":
+        elif st.session_state.nav == "Appointments":
             show_appointments_page()
-        elif current_page == "Analytics":
+        elif st.session_state.nav == "Analytics":
             show_analytics_page()
-        elif current_page == "Messages":
+        elif st.session_state.nav == "Messages":
             show_messages_page()
-        elif current_page == "Admin" and st.session_state.get('user_role') == "admin":
+        elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
             show_admin_panel()
         else:
             st.warning("Page not found")
             st.session_state.nav = "Home"
             st.experimental_rerun()
-            
-    except Exception as e:
-        st.error("An error occurred while loading the page. Please try again.")
-        print(f"Page loading error: {str(e)}")
-        st.session_state.nav = "Home"
-        st.experimental_rerun()
+    
+    render_page()
 
 if __name__ == "__main__":
     main()
