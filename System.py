@@ -4000,8 +4000,8 @@ def _handle_model_upload(new_model, version, description, release_notes):
             cursor.execute('''
                 INSERT INTO model_versions 
                 (version, description, release_notes, path, uploaded_by, performance_metrics)
-                VALUES (?, ?, ?, ?, ?, ?))
-            ''', (
+                VALUES (?, ?, ?, ?, ?, ?)
+            '''), (
                 version,
                 description,
                 release_notes,
