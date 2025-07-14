@@ -2360,7 +2360,6 @@ def show_home_page():
 # -------------------------------
 # 👁️ Detection Page 
 # -------------------------------
-
 def show_detection_page():
     """Show the fully functional cataract detection interface"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
@@ -2444,7 +2443,7 @@ def show_detection_page():
                             if patient_id:
                                 st.session_state.selected_patient = get_patient_by_id(patient_id)
                                 st.success("Patient registered successfully!")
-                                experimental_rerun()
+                                st.experimental_rerun()
 
         # Only show detection interface if patient is selected
         if st.session_state.selected_patient:
@@ -2499,7 +2498,7 @@ def show_detection_page():
                                         "confidence": confidence,
                                         "timestamp": datetime.now()
                                     }
-                                    experimental_rerun()
+                                    st.experimental_rerun()
                         except Exception as e:
                             st.error(f"Analysis failed: {str(e)}")
                             if os.path.exists(temp_file):
@@ -2655,11 +2654,11 @@ def show_detection_page():
                             success_count += 1
                     
                     st.success(f"Updated {success_count} records")
-                    experimental_rerun()
+                    st.experimental_rerun()
             
             with col2:
                 if st.button("🔄 Refresh Data", key="refresh_data_btn"):
-                    st.rerun()
+                    st.experimental_rerun()
             
             with col3:
                 if selected_rows and st.button(
@@ -2673,7 +2672,7 @@ def show_detection_page():
                             delete_count += 1
                     
                     st.success(f"Deleted {delete_count} records")
-                    experimental_rerun()
+                    st.experimental_rerun()
 
             # Detailed view for single selection
             if len(selected_rows) == 1:
@@ -2785,7 +2784,7 @@ def show_appointments_page():
                         st.success(f"Appointment booked successfully (ID: {appointment_id})")
                         st.balloons()
                         time.sleep(1)
-                        experimental_rerun()
+                        st.experimental_rerun()
                     else:
                         st.error("Failed to book appointment")
     
@@ -2951,7 +2950,7 @@ def show_appointments_page():
                 
                 if st.button("Cancel Reschedule", type="secondary"):
                     del st.session_state.reschedule_appt
-                    experimental_rerun()
+                    st.experimental_rerun()
         else:
             st.info("No appointments found")
             
@@ -3371,6 +3370,7 @@ def _display_appointment_analytics(appointments: pd.DataFrame):
     # Detailed data view
     with st.expander("🔍 View Detailed Data"):
         st.dataframe(filtered, use_container_width=True)
+        
 # -------------------------------
 # 📧 Messaging Page
 # -------------------------------
@@ -3400,7 +3400,7 @@ def _display_inbox_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Inbox", key="refresh_inbox"):
-            st.rerun()
+            st.experimental_rerun()
     
     try:
         with st.spinner("Loading messages..."):
@@ -3433,7 +3433,7 @@ def _display_sent_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Sent", key="refresh_sent"):
-            experimental_rerun()
+            st.experimental_rerun()
     
     try:
         with st.spinner("Loading sent messages..."):
@@ -3471,7 +3471,7 @@ def _display_trash_tab():
             if empty_trash(st.session_state.user_email):
                 st.success("Trash emptied successfully")
                 time.sleep(1)
-                experimental_rerun()
+                st.experimental_rerun()
             else:
                 st.error("Failed to empty trash")
     
@@ -3545,7 +3545,7 @@ def _display_message(msg, inbox=False, sent=False, trash=False):
                     if restore_message(msg['id']):
                         st.success("Message restored")
                         time.sleep(1)
-                        experimental_rerun()
+                        st.experimental_rerun()
                     else:
                         st.error("Failed to restore message")
         else:
@@ -3632,7 +3632,7 @@ def _display_compose_section():
                             ):
                                 st.success("✅ Message sent successfully!")
                                 time.sleep(1)
-                                experimental_rerun()
+                                st.experimental_rerun()
                             else:
                                 st.error("❌ Failed to send message. Please try again.")
             else:
@@ -3758,12 +3758,12 @@ def _display_pending_approvals():
                     if st.button(f"✅ Approve {user['id']}", key=f"approve_{user['id']}"):
                         if approve_user(user['id'], st.session_state.user_id):
                             st.success("User approved")
-                            experimental_rerun()
+                            st.experimental_rerun()
                 with col2:
                     if st.button(f"❌ Reject {user['id']}", key=f"reject_{user['id']}"):
                         if reject_user(user['id'], st.session_state.user_id):
                             st.success("User rejected")
-                            experimental_rerun()
+                            st.experimental_rerun()
     else:
         st.info("No pending registrations found")
 
@@ -3900,7 +3900,7 @@ def _display_user_management():
                 if _update_user_status(selected_user['id'], 'suspended'):
                     st.success("User deactivated")
                     time.sleep(0.5)
-                    experimental_rerun()
+                    st.experimental_rerun()
 
     with col3:
         if st.button("🔒 Reset Password", disabled=not selected_user, key="reset_btn"):
@@ -3909,7 +3909,7 @@ def _display_user_management():
                 if new_pass:
                     st.success(f"Password reset to: {new_pass}")
                     time.sleep(0.5)
-                    experimental_rerun()
+                    st.experimental_rerun()
 
     with col4:
         if st.button("🗑️ Delete", disabled=not selected_user, key="delete_btn"):
@@ -3917,7 +3917,7 @@ def _display_user_management():
                 if _delete_user(selected_user['id']):
                     st.success("User deleted")
                     time.sleep(0.5)
-                    experimental_rerun()
+                    st.experimental_rerun()
 
     _display_add_user_form()
 
@@ -4057,7 +4057,7 @@ def _display_model_management():
                         if delete_model_version(selected_model['id']):
                             st.success("Model version deleted successfully!")
                             time.sleep(1)
-                            experimental_rerun()
+                            st.experimental_rerun()
             
             with col2:
                 is_active = selected_model.get('is_active', '') == '✅'
@@ -4065,7 +4065,7 @@ def _display_model_management():
                     if _set_active_model(selected_model['id']):
                         st.success("Model set as active!")
                         time.sleep(1)
-                        experimental_rerun()
+                        st.experimental_rerun()
     else:
         st.info("No model versions found in the system")
 
@@ -4174,7 +4174,7 @@ def _display_system_settings():
         
         with col2:
             if st.button("Restart App", type="secondary", use_container_width=True):
-                st.rerun()
+                st.experimental_rerun()
         
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -4527,14 +4527,14 @@ def main():
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                experimental_rerun()
+                st.experimental_rerun()
         
         # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            experimental_rerun()
+            st.experimental_rerun()
         
         # System status
         st.sidebar.markdown("---")
@@ -4561,7 +4561,7 @@ def main():
     else:
         st.warning("Page not found")
         st.session_state.nav = "Home"
-        experimental_rerun()
+        st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
