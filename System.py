@@ -1345,129 +1345,139 @@ def restore_message(message_id):
 # 🔐 Authentication UI
 # -------------------------------
 def show_auth_page():
-    """Show login/register interface with working switch"""
-    st.markdown("""
-    <style>
-    .auth-container {
-        max-width: 400px;
-        margin: 2rem auto;
-        padding: 2rem;
-        background: white;
-        border-radius: 10px;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-        background-image: url('https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=500&q=80');
-        background-size: cover;
-        background-position: center;
-        background-blend-mode: overlay;
-        background-color: rgba(255,255,255,0.9);
-    }
-    .auth-title {
-        font-family: 'Playfair Display', serif;
-        font-size: 1.8rem;
-        font-weight: 700;
-        text-align: center;
-        margin-bottom: 1rem;
-        color: #2d3748;
-    }
-    .auth-subtitle {
-        text-align: center;
-        font-size: 1rem;
-        color: #718096;
-        margin-bottom: 2rem;
-    }
-    .auth-switch {
-        text-align: center;
-        margin-top: 1.5rem;
-        font-size: 0.9rem;
-        color: #718096;
-    }
-    .error-message {
-        color: #e53e3e;
-        font-size: 0.9rem;
-        margin-top: 0.5rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    """Show login/register interface with proper error handling and session management"""
+    try:
+        # Initialize auth mode in session state if not exists
+        if 'auth_mode' not in st.session_state:
+            st.session_state.auth_mode = "login"
+        
+        # Initialize login attempts counter
+        if 'login_attempts' not in st.session_state:
+            st.session_state.login_attempts = 0
 
-    # Initialize auth mode
-    if 'auth_mode' not in st.session_state:
-        st.session_state.auth_mode = "login"
+        # CSS styling
+        st.markdown("""
+        <style>
+            .auth-container {
+                max-width: 400px;
+                margin: 2rem auto;
+                padding: 2rem;
+                background: white;
+                border-radius: 10px;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            }
+            .auth-title {
+                font-size: 1.8rem;
+                font-weight: 700;
+                text-align: center;
+                margin-bottom: 1rem;
+                color: #2d3748;
+            }
+            .auth-error {
+                color: #e53e3e;
+                padding: 0.75rem;
+                background-color: #fff5f5;
+                border-radius: 0.5rem;
+                margin-bottom: 1rem;
+                border: 1px solid #fed7d7;
+            }
+        </style>
+        """, unsafe_allow_html=True)
 
-    # Login Form
-    if st.session_state.auth_mode == "login":
-        with st.container():
-            st.markdown('<div class="auth-container">', unsafe_allow_html=True)
-            st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
-            st.markdown('<div class="auth-subtitle">Sign in to your account</div>', unsafe_allow_html=True)
-            
-            with st.form("login_form", clear_on_submit=False):
-                email = st.text_input("Email", placeholder="your@email.com").strip()
-                password = st.text_input("Password", type="password")
+        # Login Form
+        if st.session_state.auth_mode == "login":
+            with st.container():
+                st.markdown('<div class="auth-container">', unsafe_allow_html=True)
+                st.markdown('<div class="auth-title">Login</div>', unsafe_allow_html=True)
                 
-                login_button = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+                with st.form("login_form", clear_on_submit=True):
+                    email = st.text_input("Email", placeholder="your@email.com").strip()
+                    password = st.text_input("Password", type="password")
+                    
+                    login_button = st.form_submit_button("Sign In", type="primary")
+                    
+                    if login_button:
+                        try:
+                            if not email or not password:
+                                st.error("Please enter both email and password")
+                            else:
+                                if login_user(email, password):
+                                    # Reset login attempts on success
+                                    st.session_state.login_attempts = 0
+                                    # Use success message and natural navigation instead of rerun
+                                    st.success("Login successful! Loading dashboard...")
+                                    time.sleep(1)  # Give time to see the message
+                                    return  # Exit the auth page
+                                else:
+                                    # Increment failed attempts
+                                    st.session_state.login_attempts += 1
+                                    if st.session_state.login_attempts >= 3:
+                                        st.error("Too many failed attempts. Please try again later.")
+                                        time.sleep(5)  # Brief cooldown
+                                    else:
+                                        st.error("Invalid email or password")
+                        except Exception as e:
+                            st.error("An error occurred during login. Please try again.")
+                            # Log the actual error for debugging
+                            print(f"Login error: {str(e)}")
+
+                # Registration switch
+                st.markdown('<div style="text-align: center; margin-top: 1.5rem;">Don\'t have an account?</div>', unsafe_allow_html=True)
+                if st.button("Register here", key="to_register"):
+                    st.session_state.auth_mode = "register"
+                    st.experimental_rerun()
                 
-                if login_button:
-                    if not email or not password:
-                        st.error("Please enter both email and password", icon="⚠️")
-                    else:
-                        if login_user(email, password):
-                            st.success("Login successful! Redirecting...")
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("Login failed - please try again", icon="🚨")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-            # Registration switch
-            st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
-            if st.button("Register here", key="to_register", use_container_width=True):
-                st.session_state.auth_mode = "register"
-                st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    # Registration Form
-    else:
-        with st.container():
-            st.markdown('<div class="auth-container">', unsafe_allow_html=True)
-            st.markdown('<div class="auth-title">Create Account</div>', unsafe_allow_html=True)
-            st.markdown('<div class="auth-subtitle">Get started in seconds</div>', unsafe_allow_html=True)
-            
-            with st.form("register_form", clear_on_submit=False):
-                full_name = st.text_input("Full Name", placeholder="John Doe").strip()
-                email = st.text_input("Email", placeholder="your@email.com").strip()
-                password = st.text_input("Password", type="password")
-                confirm_password = st.text_input("Confirm Password", type="password")
-                role = st.selectbox("Role", ["assistant", "doctor"])
+        # Registration Form
+        else:
+            with st.container():
+                st.markdown('<div class="auth-container">', unsafe_allow_html=True)
+                st.markdown('<div class="auth-title">Create Account</div>', unsafe_allow_html=True)
                 
-                register_button = st.form_submit_button("Register", type="primary", use_container_width=True)
+                with st.form("register_form", clear_on_submit=True):
+                    full_name = st.text_input("Full Name", placeholder="John Doe").strip()
+                    email = st.text_input("Email", placeholder="your@email.com").strip()
+                    password = st.text_input("Password", type="password")
+                    confirm_password = st.text_input("Confirm Password", type="password")
+                    role = st.selectbox("Role", ["assistant", "doctor"])
+                    
+                    register_button = st.form_submit_button("Register", type="primary")
+                    
+                    if register_button:
+                        try:
+                            if not all([full_name, email, password, confirm_password]):
+                                st.error("Please fill in all fields")
+                            elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                                st.error("Please enter a valid email address")
+                            elif len(password) < 8:
+                                st.error("Password must be at least 8 characters")
+                            elif password != confirm_password:
+                                st.error("Passwords don't match")
+                            elif get_user_by_email(email):
+                                st.error("Email already registered")
+                            else:
+                                if create_user(full_name, email, password, role):
+                                    st.success("Registration submitted for admin approval")
+                                    time.sleep(1)
+                                    st.session_state.auth_mode = "login"
+                                    st.experimental_rerun()
+                        except Exception as e:
+                            st.error("An error occurred during registration. Please try again.")
+                            # Log the actual error for debugging
+                            print(f"Registration error: {str(e)}")
+
+                # Login switch
+                st.markdown('<div style="text-align: center; margin-top: 1.5rem;">Already have an account?</div>', unsafe_allow_html=True)
+                if st.button("Sign in here", key="to_login"):
+                    st.session_state.auth_mode = "login"
+                    st.experimental_rerun()
                 
-                if register_button:
-                    if not all([full_name, email, password, confirm_password]):
-                        st.error("Please fill in all fields", icon="⚠️")
-                    elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                        st.error("Please enter a valid email address", icon="✉️")
-                    elif len(password) < 8:
-                        st.error("Password must be at least 8 characters", icon="🔒")
-                    elif password != confirm_password:
-                        st.error("Passwords don't match", icon="🔁")
-                    elif get_user_by_email(email):
-                        st.error("Email already registered", icon="⛔")
-                    else:
-                        if create_user(full_name, email, password, role):
-                            st.success("Registration submitted for admin approval", icon="✅")
-                            time.sleep(1)
-                            st.session_state.auth_mode = "login"
-                            st.rerun()
-                        else:
-                            st.error("Registration failed - please try again", icon="🚨")
+                st.markdown('</div>', unsafe_allow_html=True)
 
-            # Login switch
-            st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
-            if st.button("Sign in here", key="to_login", use_container_width=True):
-                st.session_state.auth_mode = "login"
-                st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.error("An unexpected error occurred. Please refresh the page.")
+        print(f"Authentication page error: {str(e)}")
 
 # -------------------------------
 # 🏠 Home Page
