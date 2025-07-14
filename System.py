@@ -284,6 +284,11 @@ def init_database():
         result = cursor.fetchone()
         current_version = result[0] if result[0] is not None else 0
         
+        # Helper function to check if column exists
+        def column_exists(table_name, column_name):
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            return any(col[1] == column_name for col in cursor.fetchall())
+        
         # Migration 1: Initial schema (v1)
         if current_version < 1:
             try:
@@ -328,8 +333,6 @@ def init_database():
                         confidence REAL NOT NULL,
                         attended_by TEXT NOT NULL,
                         notes TEXT,
-                        image_path TEXT,
-                        last_updated TIMESTAMP,
                         FOREIGN KEY (patient_id) REFERENCES patients(id)
                     )
                 ''')
@@ -499,16 +502,18 @@ def init_database():
         # Migration 5: Enhance detections and add audit logs (v5)
         if current_version < 5:
             try:
-                # Add columns to detections table
-                cursor.execute('''
-                    ALTER TABLE detections 
-                    ADD COLUMN image_path TEXT
-                ''')
+                # Add columns to detections table only if they don't exist
+                if not column_exists('detections', 'image_path'):
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN image_path TEXT
+                    ''')
                 
-                cursor.execute('''
-                    ALTER TABLE detections 
-                    ADD COLUMN last_updated TIMESTAMP
-                ''')
+                if not column_exists('detections', 'last_updated'):
+                    cursor.execute('''
+                        ALTER TABLE detections 
+                        ADD COLUMN last_updated TIMESTAMP
+                    ''')
                 
                 # Create detection logs table
                 cursor.execute('''
@@ -594,12 +599,7 @@ def init_database():
     finally:
         if conn:
             conn.close()
-
-# Initialize database on startup
-if not init_database():
-    st.error("Failed to initialize database. Please check the logs.")
-    st.stop()
-        
+            
 # 👥 Patient Management
 # -------------------------------
 def add_patient(full_name, gender, age, village, traditional_authority, district, marital_status):
