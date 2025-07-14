@@ -2444,7 +2444,7 @@ def show_detection_page():
                             if patient_id:
                                 st.session_state.selected_patient = get_patient_by_id(patient_id)
                                 st.success("Patient registered successfully!")
-                                st.rerun()
+                                experimental_rerun()
 
         # Only show detection interface if patient is selected
         if st.session_state.selected_patient:
@@ -2499,7 +2499,7 @@ def show_detection_page():
                                         "confidence": confidence,
                                         "timestamp": datetime.now()
                                     }
-                                    st.rerun()
+                                    experimental_rerun()
                         except Exception as e:
                             st.error(f"Analysis failed: {str(e)}")
                             if os.path.exists(temp_file):
@@ -2655,7 +2655,7 @@ def show_detection_page():
                             success_count += 1
                     
                     st.success(f"Updated {success_count} records")
-                    st.rerun()
+                    experimental_rerun()
             
             with col2:
                 if st.button("🔄 Refresh Data", key="refresh_data_btn"):
@@ -2673,7 +2673,7 @@ def show_detection_page():
                             delete_count += 1
                     
                     st.success(f"Deleted {delete_count} records")
-                    st.rerun()
+                    experimental_rerun()
 
             # Detailed view for single selection
             if len(selected_rows) == 1:
@@ -2785,7 +2785,7 @@ def show_appointments_page():
                         st.success(f"Appointment booked successfully (ID: {appointment_id})")
                         st.balloons()
                         time.sleep(1)
-                        st.rerun()
+                        experimental_rerun()
                     else:
                         st.error("Failed to book appointment")
     
@@ -2951,7 +2951,7 @@ def show_appointments_page():
                 
                 if st.button("Cancel Reschedule", type="secondary"):
                     del st.session_state.reschedule_appt
-                    st.rerun()
+                    experimental_rerun()
         else:
             st.info("No appointments found")
             
@@ -2966,7 +2966,7 @@ def show_analytics_page():
     .dashboard-header {
         font-family: 'Segoe UI', sans-serif;
         color: #2F2F2F;
-        font-size: 1.5rem;
+        font-size: 1rem;
         font-weight: 600;
         margin-bottom: 1.5rem;
         border-bottom: 2px solid #F2F2F2;
@@ -3433,7 +3433,7 @@ def _display_sent_tab():
     col1, col2 = st.columns([3, 1])
     with col2:
         if st.button("🔄 Refresh Sent", key="refresh_sent"):
-            st.rerun()
+            experimental_rerun()
     
     try:
         with st.spinner("Loading sent messages..."):
@@ -3471,7 +3471,7 @@ def _display_trash_tab():
             if empty_trash(st.session_state.user_email):
                 st.success("Trash emptied successfully")
                 time.sleep(1)
-                st.rerun()
+                experimental_rerun()
             else:
                 st.error("Failed to empty trash")
     
@@ -3545,7 +3545,7 @@ def _display_message(msg, inbox=False, sent=False, trash=False):
                     if restore_message(msg['id']):
                         st.success("Message restored")
                         time.sleep(1)
-                        st.rerun()
+                        experimental_rerun()
                     else:
                         st.error("Failed to restore message")
         else:
@@ -3632,7 +3632,7 @@ def _display_compose_section():
                             ):
                                 st.success("✅ Message sent successfully!")
                                 time.sleep(1)
-                                st.rerun()
+                                experimental_rerun()
                             else:
                                 st.error("❌ Failed to send message. Please try again.")
             else:
@@ -3758,12 +3758,12 @@ def _display_pending_approvals():
                     if st.button(f"✅ Approve {user['id']}", key=f"approve_{user['id']}"):
                         if approve_user(user['id'], st.session_state.user_id):
                             st.success("User approved")
-                            st.rerun()
+                            experimental_rerun()
                 with col2:
                     if st.button(f"❌ Reject {user['id']}", key=f"reject_{user['id']}"):
                         if reject_user(user['id'], st.session_state.user_id):
                             st.success("User rejected")
-                            st.rerun()
+                            experimental_rerun()
     else:
         st.info("No pending registrations found")
 
@@ -3900,7 +3900,7 @@ def _display_user_management():
                 if _update_user_status(selected_user['id'], 'suspended'):
                     st.success("User deactivated")
                     time.sleep(0.5)
-                    st.rerun()
+                    experimental_rerun()
 
     with col3:
         if st.button("🔒 Reset Password", disabled=not selected_user, key="reset_btn"):
@@ -3909,7 +3909,7 @@ def _display_user_management():
                 if new_pass:
                     st.success(f"Password reset to: {new_pass}")
                     time.sleep(0.5)
-                    st.rerun()
+                    experimental_rerun()
 
     with col4:
         if st.button("🗑️ Delete", disabled=not selected_user, key="delete_btn"):
@@ -3917,7 +3917,7 @@ def _display_user_management():
                 if _delete_user(selected_user['id']):
                     st.success("User deleted")
                     time.sleep(0.5)
-                    st.rerun()
+                    experimental_rerun()
 
     _display_add_user_form()
 
@@ -4057,7 +4057,7 @@ def _display_model_management():
                         if delete_model_version(selected_model['id']):
                             st.success("Model version deleted successfully!")
                             time.sleep(1)
-                            st.rerun()
+                            experimental_rerun()
             
             with col2:
                 is_active = selected_model.get('is_active', '') == '✅'
@@ -4065,7 +4065,7 @@ def _display_model_management():
                     if _set_active_model(selected_model['id']):
                         st.success("Model set as active!")
                         time.sleep(1)
-                        st.rerun()
+                        experimental_rerun()
     else:
         st.info("No model versions found in the system")
 
@@ -4491,14 +4491,14 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Initialize session state for navigation if not exists
-    if 'nav' not in st.session_state:
-        st.session_state.nav = "Home"
-    
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
+    
+    # Initialize navigation state
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
     
     # Sidebar navigation
     with st.sidebar:
@@ -4527,16 +4527,14 @@ def main():
         for label, page in menu_options.items():
             if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
                 st.session_state.nav = page
-                # Use experimental_rerun instead of rerun
-                st.experimental_rerun()
+                experimental_rerun()
         
         # Logout button
         st.sidebar.markdown("---")
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             logout_user()
             st.session_state.clear()
-            # Use experimental_rerun instead of rerun
-            st.experimental_rerun()
+            experimental_rerun()
         
         # System status
         st.sidebar.markdown("---")
@@ -4547,26 +4545,23 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     
-    # Page routing - using a function to avoid rerun issues
-    def render_page():
-        if st.session_state.nav == "Home":
-            show_home_page()
-        elif st.session_state.nav == "Detection":
-            show_detection_page()
-        elif st.session_state.nav == "Appointments":
-            show_appointments_page()
-        elif st.session_state.nav == "Analytics":
-            show_analytics_page()
-        elif st.session_state.nav == "Messages":
-            show_messages_page()
-        elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
-            show_admin_panel()
-        else:
-            st.warning("Page not found")
-            st.session_state.nav = "Home"
-            st.experimental_rerun()
-    
-    render_page()
+    # Page routing
+    if st.session_state.nav == "Home":
+        show_home_page()
+    elif st.session_state.nav == "Detection":
+        show_detection_page()
+    elif st.session_state.nav == "Appointments":
+        show_appointments_page()
+    elif st.session_state.nav == "Analytics":
+        show_analytics_page()
+    elif st.session_state.nav == "Messages":
+        show_messages_page()
+    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
+        show_admin_panel()
+    else:
+        st.warning("Page not found")
+        st.session_state.nav = "Home"
+        experimental_rerun()
 
 if __name__ == "__main__":
     main()
