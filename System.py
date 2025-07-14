@@ -267,6 +267,10 @@ def init_database():
     """Initialize the database with complete schema and migrations"""
     conn = None
     try:
+
+        models_dir = REPO_ROOT / MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
+        
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
