@@ -1476,232 +1476,867 @@ def show_home_page():
     """Show modern landing page with interactive elements"""
     st.markdown("""
     <style>
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+    }
+    
+    @keyframes gradientBG {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
     .hero {
         background: linear-gradient(135deg, #48bb78, #38a169);
-        padding: 3rem 2rem;
-        border-radius: 16px;
+        padding: 5rem 2rem;
+        border-radius: 20px;
         color: white;
-        margin-bottom: 2rem;
+        margin-bottom: 3rem;
         text-align: center;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.15);
         transition: all 0.5s ease;
         background-image: url('https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=1200&q=80');
         background-size: cover;
         background-position: center;
         background-blend-mode: overlay;
+        position: relative;
+        overflow: hidden;
+        animation: fadeIn 1s ease-out;
     }
-    .hero:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 12px 32px rgba(0,0,0,0.15);
+    
+    .hero-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.2);
+        z-index: 0;
     }
+    
+    .hero-content {
+        position: relative;
+        z-index: 1;
+    }
+    
     .hero-title {
-        font-size: 2.8rem;
+        font-size: 3.5rem;
         font-weight: 800;
         margin-bottom: 0.5rem;
         font-family: 'Playfair Display', serif;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        position: relative;
+        animation: float 4s ease-in-out infinite;
     }
+    
     .hero-subtitle {
-        font-size: 1.2rem;
+        font-size: 1.6rem;
         opacity: 0.9;
         margin-bottom: 1.5rem;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
-    .feature-card {
-        background: rgba(255,255,255,0.9);
-        backdrop-filter: blur(8px);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    
+    .welcome-badge {
+        display: inline-block;
+        background: rgba(255,255,255,0.2);
+        padding: 0.5rem 1.5rem;
+        border-radius: 50px;
+        font-size: 1.1rem;
+        margin-top: 1rem;
+        backdrop-filter: blur(5px);
         border: 1px solid rgba(255,255,255,0.3);
-        transition: all 0.3s ease;
     }
+    
+    /* Features Section */
+    .features-section {
+        margin: 4rem 0;
+    }
+    
+    .feature-card {
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 2.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+        border: 1px solid rgba(255,255,255,0.4);
+        transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        position: relative;
+        overflow: hidden;
+        animation: fadeIn 0.8s ease-out;
+        height: 100%;
+    }
+    
     .feature-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
-        border-color: #48bb78;
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 16px 32px rgba(0,0,0,0.12);
     }
+    
+    .feature-icon-container {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #48bb78, #38a169);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 12px rgba(72,187,120,0.3);
+    }
+    
     .feature-icon {
         font-size: 2.5rem;
-        margin-bottom: 1rem;
-        color: #38a169;
+        color: white;
+    }
+    
+    .feature-image {
+        height: 180px;
+        background-size: cover;
+        background-position: center;
+        border-radius: 12px;
+        margin-top: 1.5rem;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .feature-image-overlay {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        padding: 1rem;
+        background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
+        color: white;
+        font-size: 0.9rem;
+    }
+    
+    /* Stats Section */
+    .stats-section {
+        margin: 4rem 0;
+    }
+    
+    .stats-container {
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: blur(12px);
+        border-radius: 20px;
+        padding: 3rem;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.08);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stat-card {
+        text-align: center;
+        padding: 1.5rem;
         transition: all 0.3s ease;
     }
-    .feature-card:hover .feature-icon {
-        transform: scale(1.1);
-        color: #2c7a4d;
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
     }
-    .stats-container {
-        background: rgba(255,255,255,0.85);
-        backdrop-filter: blur(8px);
+    
+    .stat-value {
+        font-size: 2.8rem;
+        font-weight: 700;
+        background: linear-gradient(135deg, #48bb78, #38a169);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        line-height: 1;
+        margin-bottom: 0.5rem;
+    }
+    
+    .stat-label {
+        font-size: 1.1rem;
+        color: #4a5568;
+        font-weight: 500;
+    }
+    
+    .stat-trend {
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .trend-up {
+        color: #38a169;
+    }
+    
+    .trend-down {
+        color: #e53e3e;
+    }
+    
+    /* Quick Actions */
+    .actions-section {
+        margin: 4rem 0;
+    }
+    
+    .action-card {
+        background: white;
+        border-radius: 16px;
+        padding: 2.5rem 2rem;
+        text-align: center;
+        box-shadow: 0 8px 24px rgba(72,187,120,0.1);
+        transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+        height: 100%;
+    }
+    
+    .action-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, rgba(72,187,120,0.05) 0%, transparent 100%);
+    }
+    
+    .action-card:hover {
+        transform: translateY(-5px) scale(1.03);
+        box-shadow: 0 12px 32px rgba(72,187,120,0.2);
+    }
+    
+    .action-icon {
+        font-size: 3rem;
+        margin-bottom: 1.5rem;
+        color: #38a169;
+        transition: all 0.3s ease;
+        display: inline-block;
+    }
+    
+    .action-card:hover .action-icon {
+        transform: scale(1.2) rotate(10deg);
+        animation: float 2s ease-in-out infinite;
+    }
+    
+    /* Recent Activity */
+    .activity-section {
+        margin: 4rem 0;
+    }
+    
+    .activity-card {
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: blur(12px);
+        border-radius: 20px;
+        padding: 2.5rem;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
+    }
+    
+    .activity-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+    }
+    
+    .activity-item {
+        display: flex;
+        align-items: center;
+        padding: 1rem 0;
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+    
+    .activity-avatar {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #48bb78, #38a169);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        margin-right: 1rem;
+        flex-shrink: 0;
+    }
+    
+    /* Patient Spotlight */
+    .spotlight-section {
+        margin: 4rem 0;
+    }
+    
+    .patient-card {
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: blur(12px);
         border-radius: 16px;
         padding: 2rem;
-        margin: 2rem 0;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-    }
-    .quick-action {
-        background: white;
-        border-radius: 12px;
-        padding: 1.5rem;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
         transition: all 0.3s ease;
-        cursor: pointer;
     }
-    .quick-action:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 24px rgba(72,187,120,0.15);
-        background: linear-gradient(135deg, #f0fff4, #ffffff);
+    
+    .patient-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 12px 32px rgba(0,0,0,0.12);
     }
-    .action-icon {
+    
+    .patient-avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #48bb78, #38a169);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
         font-size: 2rem;
+        font-weight: bold;
+        margin: 0 auto 1.5rem;
+    }
+    
+    /* System Alerts */
+    .alerts-section {
+        margin: 4rem 0;
+    }
+    
+    .alert-card {
+        background: rgba(255,255,255,0.98);
+        backdrop-filter: blur(12px);
+        border-radius: 16px;
+        padding: 2rem;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+        border-left: 5px solid #e53e3e;
+    }
+    
+    .alert-item {
+        display: flex;
+        align-items: flex-start;
         margin-bottom: 1rem;
-        color: #38a169;
-        transition: all 0.3s ease;
     }
-    .quick-action:hover .action-icon {
-        transform: scale(1.2);
+    
+    .alert-icon {
+        font-size: 1.5rem;
+        margin-right: 1rem;
+        color: #e53e3e;
     }
-    .model-info-card {
-        background: rgba(255,255,255,0.9);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border-left: 4px solid #38a169;
+    
+    /* Section Titles */
+    .section-title {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #2d3748;
+        margin: 0 0 2rem;
+        position: relative;
+        display: inline-block;
+    }
+    
+    .section-title::after {
+        content: '';
+        position: absolute;
+        bottom: -10px;
+        left: 0;
+        width: 80px;
+        height: 5px;
+        background: linear-gradient(90deg, #48bb78, #38a169);
+        border-radius: 3px;
+    }
+    
+    .section-subtitle {
+        font-size: 1.1rem;
+        color: #718096;
+        margin-bottom: 2rem;
+        max-width: 700px;
+    }
+    
+    /* Floating Elements */
+    .floating-element {
+        position: absolute;
+        width: 120px;
+        opacity: 0.8;
+        animation: float 6s ease-in-out infinite;
+        z-index: 0;
+    }
+    
+    .element-1 {
+        top: 20%;
+        left: 5%;
+        animation-delay: 0s;
+    }
+    
+    .element-2 {
+        top: 60%;
+        right: 5%;
+        animation-delay: 1s;
+    }
+    
+    /* Pulse Animation */
+    .pulse {
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+    
+    /* Tooltip */
+    .tooltip {
+        position: relative;
+        display: inline-block;
+    }
+    
+    .tooltip .tooltiptext {
+        visibility: hidden;
+        width: 200px;
+        background-color: #2d3748;
+        color: #fff;
+        text-align: center;
+        border-radius: 6px;
+        padding: 0.5rem;
+        position: absolute;
+        z-index: 1;
+        bottom: 125%;
+        left: 50%;
+        transform: translateX(-50%);
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+    
+    .tooltip:hover .tooltiptext {
+        visibility: visible;
+        opacity: 1;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    # Hero Section
+    # Hero Section with enhanced elements
     st.markdown(f"""
     <div class="hero">
-        <div class="hero-title">Munthandiz Cataract Detection</div>
-        <div class="hero-subtitle">Advanced AI-powered eye care diagnostics</div>
-        <div style="font-size: 1rem; opacity: 0.8;">Welcome back, {st.session_state.user_name} 👋</div>
+        <div class="hero-overlay"></div>
+        <img src="https://cdn-icons-png.flaticon.com/512/2779/2779775.png" class="floating-element element-1" style="width: 100px;">
+        <img src="https://cdn-icons-png.flaticon.com/512/2779/2779775.png" class="floating-element element-2" style="width: 80px;">
+        <div class="hero-content">
+            <div class="hero-title">Munthandiz Cataract Detection</div>
+            <div class="hero-subtitle">Advanced AI-powered eye care diagnostics</div>
+            <div class="welcome-badge">Welcome back, {st.session_state.user_name} 👋</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Key Features Grid
-    st.markdown('<div class="section-title">Key Features</div>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">👁️</div>
-            <h3>AI Detection</h3>
-            <p>State-of-the-art cataract classification with 95%+ accuracy</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">📊</div>
-            <h3>Real-time Analytics</h3>
-            <p>Comprehensive dashboards with patient insights</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="feature-icon">🤝</div>
-            <h3>Collaborative Care</h3>
-            <p>Seamless communication between medical teams</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Quick Stats
-    conn = sqlite3.connect(DB_NAME)
-    try:
-        patients_count = pd.read_sql_query("SELECT COUNT(*) FROM patients", conn).iloc[0,0]
-        detections_count = pd.read_sql_query("SELECT COUNT(*) FROM detections", conn).iloc[0,0]
-        positive_cases = pd.read_sql_query("SELECT COUNT(*) FROM detections WHERE result != 'normal'", conn).iloc[0,0]
-        avg_confidence = pd.read_sql_query("SELECT AVG(confidence) FROM detections", conn).iloc[0,0] or 0
-    except Exception as e:
-        st.error(f"Error loading statistics: {str(e)}")
-        patients_count = 0
-        detections_count = 0
-        positive_cases = 0
-        avg_confidence = 0
-    finally:
-        conn.close()
-    
-    st.markdown("""
-    <div class="stats-container">
-        <div style="display: flex; justify-content: space-around; text-align: center;">
-            <div>
-                <div style="font-size: 2rem; font-weight: 700; color: #38a169;">{patients_count}</div>
-                <div style="font-size: 0.9rem; color: #4a5568;">Patients Registered</div>
-            </div>
-            <div>
-                <div style="font-size: 2rem; font-weight: 700; color: #38a169;">{detections_count}</div>
-                <div style="font-size: 0.9rem; color: #4a5568;">Diagnoses Performed</div>
-            </div>
-            <div>
-                <div style="font-size: 2rem; font-weight: 700; color: #38a169;">{positive_cases}</div>
-                <div style="font-size: 0.9rem; color: #4a5568;">Positive Cases</div>
-            </div>
-        </div>
-    </div>
-    """.format(patients_count=patients_count, detections_count=detections_count, positive_cases=positive_cases), 
-    unsafe_allow_html=True)
-    
-    # Display active model information
-    model_info = get_active_model_info()
-    st.markdown(f"""
-    <div class="model-info-card">
-        <h3>Active Model Information</h3>
-        <p><strong>Version:</strong> {model_info['version']}</p>
-        <p><strong>Description:</strong> {model_info['description']}</p>
-        <p><strong>Uploaded by:</strong> {model_info['uploaded_by']}</p>
-        <p><strong>Upload date:</strong> {model_info['upload_date']}</p>
-        <p><strong>Path:</strong> <code>{model_info['path']}</code></p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Quick Actions
-    st.markdown('<div class="section-title">Quick Actions</div>', unsafe_allow_html=True)
-    action_col1, action_col2, action_col3 = st.columns(3)
-    
-    with action_col1:
-        if st.button("🔍 New Detection", use_container_width=True):
-            st.session_state.nav = "Detection"
-            st.rerun()
-    
-    with action_col2:
-        if st.button("📅 Schedule", use_container_width=True):
-            st.session_state.nav = "Appointments"
-            st.rerun()
-    
-    with action_col3:
-        if st.button("✉️ Messages", use_container_width=True):
-            st.session_state.nav = "Messages"
-            st.rerun()
-    
-    # Recent Activity
-    st.markdown('<div class="section-title">Recent Activity</div>', unsafe_allow_html=True)
-    
-    conn = sqlite3.connect(DB_NAME)
-    try:
-        recent_detections = pd.read_sql_query('''
-            SELECT p.full_name, d.result, d.confidence, d.detection_date 
-            FROM detections d
-            JOIN patients p ON d.patient_id = p.id
-            ORDER BY d.detection_date DESC
-            LIMIT 5
-        ''', conn)
+    # Features Section with expanded content
+    with st.container():
+        st.markdown('<div class="features-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Advanced Features</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Explore the powerful capabilities of our cataract detection system designed for medical professionals</div>', unsafe_allow_html=True)
         
-        if not recent_detections.empty:
-            st.dataframe(recent_detections, use_container_width=True)
-        else:
-            st.info("No recent activity found")
-    except Exception as e:
-        st.error(f"Error loading recent activity: {str(e)}")
-    finally:
-        conn.close()
-
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div class="feature-card">
+                <div class="feature-icon-container">
+                    <div class="feature-icon">👁️</div>
+                </div>
+                <h3 style="margin-bottom: 1rem;">AI-Powered Detection</h3>
+                <p style="color: #4a5568; margin-bottom: 1rem;">Our deep learning model achieves 96.2% accuracy in classifying cataract severity levels from retinal images, with specialized algorithms for early detection.</p>
+                <div class="feature-image" style="background-image: url('https://images.unsplash.com/photo-1579684453423-f84349ef60b0?auto=format&fit=crop&w=500&q=80');">
+                    <div class="feature-image-overlay">Retinal image analysis</div>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span style="font-size: 0.9rem; color: #718096;">Accuracy</span>
+                        <span style="font-weight: 600; color: #38a169;">96.2%</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span style="font-size: 0.9rem; color: #718096;">Processing Time</span>
+                        <span style="font-weight: 600; color: #38a169;">2.3s avg</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class="feature-card">
+                <div class="feature-icon-container">
+                    <div class="feature-icon">📊</div>
+                </div>
+                <h3 style="margin-bottom: 1rem;">Comprehensive Analytics</h3>
+                <p style="color: #4a5568; margin-bottom: 1rem;">Interactive dashboards provide real-time insights into patient demographics, detection trends, and clinic performance metrics.</p>
+                <div class="feature-image" style="background-image: url('https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=500&q=80');">
+                    <div class="feature-image-overlay">Data visualization</div>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span style="font-size: 0.9rem; color: #718096;">Metrics Tracked</span>
+                        <span style="font-weight: 600; color: #38a169;">18+</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-size: 0.9rem; color: #718096;">Export Formats</span>
+                        <span style="font-weight: 600; color: #38a169;">PDF, CSV</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div class="feature-card">
+                <div class="feature-icon-container">
+                    <div class="feature-icon">🤝</div>
+                </div>
+                <h3 style="margin-bottom: 1rem;">Collaborative Platform</h3>
+                <p style="color: #4a5568; margin-bottom: 1rem;">Seamless communication tools connect doctors, assistants, and specialists with secure messaging and case discussions.</p>
+                <div class="feature-image" style="background-image: url('https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=500&q=80');">
+                    <div class="feature-image-overlay">Team collaboration</div>
+                </div>
+                <div style="margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <span style="font-size: 0.9rem; color: #718096;">Messages/Day</span>
+                        <span style="font-weight: 600; color: #38a169;">42 avg</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-size: 0.9rem; color: #718096;">Response Time</span>
+                        <span style="font-weight: 600; color: #38a169;">23m avg</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Stats Section with more detailed metrics
+    with st.container():
+        st.markdown('<div class="stats-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">System Statistics</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Key performance indicators and operational metrics</div>', unsafe_allow_html=True)
+        
+        conn = sqlite3.connect(DB_NAME)
+        try:
+            # Basic stats
+            patients_count = pd.read_sql_query("SELECT COUNT(*) FROM patients", conn).iloc[0,0]
+            detections_count = pd.read_sql_query("SELECT COUNT(*) FROM detections", conn).iloc[0,0]
+            positive_cases = pd.read_sql_query("SELECT COUNT(*) FROM detections WHERE result != 'normal'", conn).iloc[0,0]
+            avg_confidence = pd.read_sql_query("SELECT AVG(confidence) FROM detections", conn).iloc[0,0] or 0
+            
+            # Trend calculations
+            weekly_patients = pd.read_sql_query("""
+                SELECT COUNT(*) as count FROM patients 
+                WHERE registration_date >= date('now', '-7 days')
+            """, conn).iloc[0,0]
+            
+            weekly_detections = pd.read_sql_query("""
+                SELECT COUNT(*) as count FROM detections 
+                WHERE detection_date >= datetime('now', '-7 days')
+            """, conn).iloc[0,0]
+            
+            # Demographic stats
+            avg_patient_age = pd.read_sql_query("SELECT AVG(age) FROM patients", conn).iloc[0,0] or 0
+            gender_dist = pd.read_sql_query("SELECT gender, COUNT(*) as count FROM patients GROUP BY gender", conn)
+            
+        except Exception as e:
+            st.error(f"Error loading statistics: {str(e)}")
+            patients_count = 0
+            detections_count = 0
+            positive_cases = 0
+            avg_confidence = 0
+            weekly_patients = 0
+            weekly_detections = 0
+            avg_patient_age = 0
+            gender_dist = pd.DataFrame()
+        finally:
+            conn.close()
+        
+        # Main stats row
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{patients_count}</div>
+                <div class="stat-label">Total Patients</div>
+                <div class="stat-trend {'trend-up' if weekly_patients > 0 else 'trend-down'}">
+                    {'↑' if weekly_patients > 0 else '↓'} {weekly_patients} this week
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{detections_count}</div>
+                <div class="stat-label">Total Detections</div>
+                <div class="stat-trend {'trend-up' if weekly_detections > 0 else 'trend-down'}">
+                    {'↑' if weekly_detections > 0 else '↓'} {weekly_detections} this week
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{positive_cases}</div>
+                <div class="stat-label">Positive Cases</div>
+                <div class="stat-trend">
+                    {round(positive_cases/detections_count*100, 1) if detections_count > 0 else 0}% rate
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{avg_confidence:.1f}%</div>
+                <div class="stat-label">Avg Confidence</div>
+                <div class="stat-trend">
+                    AI model accuracy
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Secondary stats row
+        st.markdown('<div style="margin-top: 2rem;"></div>', unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{round(avg_patient_age,1)}</div>
+                <div class="stat-label">Avg Patient Age</div>
+                <div class="stat-trend">
+                    Demographic insight
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            male_count = gender_dist[gender_dist['gender']=='Male']['count'].iloc[0] if not gender_dist.empty and 'Male' in gender_dist['gender'].values else 0
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{male_count}</div>
+                <div class="stat-label">Male Patients</div>
+                <div class="stat-trend">
+                    {round(male_count/patients_count*100,1) if patients_count > 0 else 0}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            female_count = gender_dist[gender_dist['gender']=='Female']['count'].iloc[0] if not gender_dist.empty and 'Female' in gender_dist['gender'].values else 0
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">{female_count}</div>
+                <div class="stat-label">Female Patients</div>
+                <div class="stat-trend">
+                    {round(female_count/patients_count*100,1) if patients_count > 0 else 0}%
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class="stat-card">
+                <div class="stat-value">
+                    <span class="tooltip">5+
+                        <span class="tooltiptext">Active team members using the system</span>
+                    </span>
+                </div>
+                <div class="stat-label">Active Users</div>
+                <div class="stat-trend">
+                    Your clinic
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Quick Actions Section with more options
+    with st.container():
+        st.markdown('<div class="actions-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Quick Actions</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Get started with these common tasks</div>', unsafe_allow_html=True)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="action-card" onclick="window.location='?nav=Detection'">
+                <div class="action-icon">🔍</div>
+                <h3 style="margin-bottom: 0.5rem;">New Detection</h3>
+                <p style="color: #718096; font-size: 0.9rem;">Start a new cataract analysis</p>
+                <div style="margin-top: 1rem; font-size: 0.8rem; color: #38a169;">
+                    {detections_count} performed
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="action-card" onclick="window.location='?nav=Appointments'">
+                <div class="action-icon">📅</div>
+                <h3 style="margin-bottom: 0.5rem;">Schedule</h3>
+                <p style="color: #718096; font-size: 0.9rem;">Manage patient appointments</p>
+                <div style="margin-top: 1rem; font-size: 0.8rem; color: #38a169;">
+                    Book new visits
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="action-card" onclick="window.location='?nav=Messages'">
+                <div class="action-icon">✉️</div>
+                <h3 style="margin-bottom: 0.5rem;">Messages</h3>
+                <p style="color: #718096; font-size: 0.9rem;">Communicate with your team</p>
+                <div style="margin-top: 1rem; font-size: 0.8rem; color: #38a169;">
+                    Secure messaging
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown(f"""
+            <div class="action-card" onclick="window.location='?nav=Analytics'">
+                <div class="action-icon">📊</div>
+                <h3 style="margin-bottom: 0.5rem;">Analytics</h3>
+                <p style="color: #718096; font-size: 0.9rem;">View detailed reports</p>
+                <div style="margin-top: 1rem; font-size: 0.8rem; color: #38a169;">
+                    Performance insights
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Recent Activity Section with more details
+    with st.container():
+        st.markdown('<div class="activity-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Recent Activity</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Latest actions in the system</div>', unsafe_allow_html=True)
+        
+        conn = sqlite3.connect(DB_NAME)
+        try:
+            recent_detections = pd.read_sql_query('''
+                SELECT p.full_name, d.result, d.confidence, d.detection_date, u.full_name as attended_by 
+                FROM detections d
+                JOIN patients p ON d.patient_id = p.id
+                JOIN users u ON d.attended_by = u.email
+                ORDER BY d.detection_date DESC
+                LIMIT 5
+            ''', conn)
+            
+            if not recent_detections.empty:
+                st.markdown('<div class="activity-card">', unsafe_allow_html=True)
+                
+                for _, row in recent_detections.iterrows():
+                    initials = ''.join([name[0].upper() for name in row['attended_by'].split()[:2]])
+                    detection_time = pd.to_datetime(row['detection_date']).strftime('%b %d, %H:%M')
+                    
+                    st.markdown(f"""
+                    <div class="activity-item">
+                        <div class="activity-avatar" style="background: linear-gradient(135deg, #48bb78, #38a169);">{initials}</div>
+                        <div>
+                            <div style="font-weight: 600;">{row['full_name']}</div>
+                            <div style="font-size: 0.9rem; color: #718096;">
+                                <span style="color: {'#38a169' if row['result'] == 'normal' else '#e53e3e'}">{row['result'].title()}</span> • 
+                                {row['confidence']:.1f}% confidence • 
+                                {detection_time}
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.info("No recent activity found")
+        except Exception as e:
+            st.error(f"Error loading recent activity: {str(e)}")
+        finally:
+            conn.close()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Patient Spotlight Section
+    with st.container():
+        st.markdown('<div class="spotlight-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Patient Spotlight</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-subtitle">Recently registered patients needing attention</div>', unsafe_allow_html=True)
+        
+        conn = sqlite3.connect(DB_NAME)
+        try:
+            spotlight_patients = pd.read_sql_query('''
+                SELECT p.*, 
+                       (SELECT COUNT(*) FROM detections d WHERE d.patient_id = p.id) as detection_count,
+                       (SELECT MAX(detection_date) FROM detections d WHERE d.patient_id = p.id) as last_detection
+                FROM patients p
+                ORDER BY registration_date DESC
+                LIMIT 3
+            ''', conn)
+            
+            if not spotlight_patients.empty:
+                col1, col2, col3 = st.columns(3)
+                
+                for idx, (_, patient) in enumerate(spotlight_patients.iterrows()):
+                    initials = ''.join([name[0].upper() for name in patient['full_name'].split()[:2]])
+                    col = [col1, col2, col3][idx]
+                    
+                    with col:
+                        st.markdown(f"""
+                        <div class="patient-card">
+                            <div class="patient-avatar">{initials}</div>
+                            <h3 style="text-align: center; margin-bottom: 0.5rem;">{patient['full_name']}</h3>
+                            <div style="text-align: center; color: #718096; margin-bottom: 1rem;">
+                                {patient['age']} years • {patient['gender']}
+                            </div>
+                            <div style="background: #f0fff4; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                    <span style="font-size: 0.9rem; color: #718096;">Village</span>
+                                    <span style="font-weight: 600;">{patient['village']}</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-size: 0.9rem; color: #718096;">District</span>
+                                    <span style="font-weight: 600;">{patient['district']}</span>
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.9rem;">
+                                <span style="color: #718096;">Detections</span>
+                                <span style="font-weight: 600;">{patient['detection_count']}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No patients found")
+        except Exception as e:
+            st.error(f"Error loading patient data: {str(e)}")
+        finally:
+            conn.close()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # System Alerts Section
+    with st.container():
+        st.markdown('<div class="alerts-section">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">System Alerts</div>', unsafe_allow_html=True)
+        
+        st.markdown('''
+        <div class="alert-card">
+            <div class="alert-item">
+                <div class="alert-icon">⚠️</div>
+                <div>
+                    <div style="font-weight: 600; margin-bottom: 0.25rem;">Database Backup Recommended</div>
+                    <div style="font-size: 0.9rem; color: #718096;">Last backup was 3 days ago. Schedule regular backups for data safety.</div>
+                </div>
+            </div>
+            <div class="alert-item">
+                <div class="alert-icon">⚠️</div>
+                <div>
+                    <div style="font-weight: 600; margin-bottom: 0.25rem;">2 Pending Approvals</div>
+                    <div style="font-size: 0.9rem; color: #718096;">New user registrations awaiting admin approval.</div>
+                </div>
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
+        
 # -------------------------------
 # 👁️ Detection Page 
 # -------------------------------
