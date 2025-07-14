@@ -3666,7 +3666,7 @@ def show_admin_panel():
     st.markdown("""
     <style>
     .admin-tab {
-        padding: 1.5rem;
+        padding: 1rem;
         border-radius: 0.5rem;
         background: rgba(255,255,255,0.8);
         margin-bottom: 1rem;
@@ -3696,18 +3696,6 @@ def show_admin_panel():
         display: flex;
         gap: 0.5rem;
         margin-top: 1rem;
-    }
-    /* Smaller action buttons */
-    .stButton>button {
-        padding: 0.25rem 0.75rem !important;
-        font-size: 0.8rem !important;
-        min-height: 1.5rem !important;
-    }
-    /* Smaller headers */
-    .small-header {
-        font-size: 1.2rem !important;
-        font-weight: 600;
-        margin-bottom: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
