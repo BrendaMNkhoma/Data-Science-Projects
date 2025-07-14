@@ -61,10 +61,6 @@ def create_user(full_name, email, password, role='assistant'):
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        st.error("Email already exists")
-        return False
-    except Exception as e:
-        st.error(f"Error creating user: {str(e)}")
         return False
     finally:
         conn.close()
@@ -82,9 +78,9 @@ def approve_user(user_id, admin_id):
             WHERE id = ?
         ''', (admin_id, user_id))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
     except Exception as e:
-        st.error(f"Error approving user: {str(e)}")
+        print(f"Error approving user: {e}")
         return False
     finally:
         conn.close()
@@ -102,9 +98,9 @@ def reject_user(user_id, admin_id):
             WHERE id = ?
         ''', (admin_id, user_id))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
     except Exception as e:
-        st.error(f"Error rejecting user: {str(e)}")
+        print(f"Error rejecting user: {e}")
         return False
     finally:
         conn.close()
@@ -169,7 +165,7 @@ def create_session_token(user_id):
         conn.commit()
         return token
     except Exception as e:
-        st.error(f"Error creating session token: {str(e)}")
+        print(f"Error creating session token: {e}")
         return None
     finally:
         conn.close()
@@ -187,7 +183,7 @@ def validate_session_token(token):
         user = cursor.fetchone()
         return user
     except Exception as e:
-        st.error(f"Error validating session token: {str(e)}")
+        print(f"Error validating session token: {e}")
         return None
     finally:
         conn.close()
@@ -199,57 +195,30 @@ def delete_session_token(token):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
         conn.commit()
-        return cursor.rowcount > 0
+        return True
     except Exception as e:
-        st.error(f"Error deleting session token: {str(e)}")
+        print(f"Error deleting session token: {e}")
         return False
     finally:
         conn.close()
 
-def initialize_session_state():
-    """Initialize all required session state variables"""
-    required_keys = [
-        'logged_in', 'user_email', 'user_name', 
-        'user_role', 'user_id', 'nav', 'auth_token'
-    ]
-    
-    for key in required_keys:
-        if key not in st.session_state:
-            if key == 'logged_in':
-                st.session_state[key] = False
-            elif key == 'nav':
-                st.session_state[key] = "Home"
-            else:
-                st.session_state[key] = None
-
 def verify_session():
     """Verify and maintain session state across page refreshes"""
-    initialize_session_state()
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
     
-    # Check for existing valid session token
-    if not st.session_state.logged_in and st.session_state.auth_token:
+    # Check for existing session cookie
+    if not st.session_state.logged_in and 'auth_token' in st.session_state:
         user = validate_session_token(st.session_state.auth_token)
         if user:
-            st.session_state.update({
-                'logged_in': True,
-                'user_email': user[2],
-                'user_name': user[1],
-                'user_role': user[4],
-                'user_id': user[0]
-            })
+            st.session_state.logged_in = True
+            st.session_state.user_email = user[2]
+            st.session_state.user_name = user[1]
+            st.session_state.user_role = user[4]
+            st.session_state.user_id = user[0]
             return True
     
     return st.session_state.logged_in
-
-def safe_rerun(delay=1):
-    """Safe wrapper for st.rerun() with error handling"""
-    try:
-        time.sleep(delay)  # Give time for UI updates
-        st.experimental_rerun()
-    except Exception as e:
-        st.error(f"Navigation error: {str(e)}")
-        time.sleep(2)
-        st.experimental_rerun()
 
 def login_user(email, password):
     """Set session state after successful login"""
@@ -274,16 +243,13 @@ def login_user(email, password):
         st.error("Failed to create session")
         return False
     
-    # Initialize all session state
-    st.session_state.update({
-        'logged_in': True,
-        'user_email': user[2],
-        'auth_token': token,
-        'user_name': user[1],
-        'user_role': user[4],
-        'user_id': user[0],
-        'nav': 'Home'
-    })
+    # Set session state
+    st.session_state.logged_in = True
+    st.session_state.user_email = user[2]
+    st.session_state.auth_token = token
+    st.session_state.user_name = user[1]
+    st.session_state.user_role = user[4]
+    st.session_state.user_id = user[0]
     
     return True
 
@@ -291,15 +257,9 @@ def logout_user():
     """Clear session state on logout"""
     if 'auth_token' in st.session_state:
         delete_session_token(st.session_state.auth_token)
-    
-    # Reset session state but keep some navigation state
-    keep_keys = ['nav']
-    new_state = {k: st.session_state[k] for k in keep_keys if k in st.session_state}
-    
     st.session_state.clear()
-    st.session_state.update(new_state)
     st.session_state.logged_in = False
-    
+
 # -------------------------------
 # 🗄️ Database Initialization
 # -------------------------------
@@ -368,6 +328,8 @@ def init_database():
                         confidence REAL NOT NULL,
                         attended_by TEXT NOT NULL,
                         notes TEXT,
+                        image_path TEXT,
+                        last_updated TIMESTAMP,
                         FOREIGN KEY (patient_id) REFERENCES patients(id)
                     )
                 ''')
@@ -537,26 +499,16 @@ def init_database():
         # Migration 5: Enhance detections and add audit logs (v5)
         if current_version < 5:
             try:
-                # Start transaction
-                cursor.execute("BEGIN TRANSACTION")
+                # Add columns to detections table
+                cursor.execute('''
+                    ALTER TABLE detections 
+                    ADD COLUMN image_path TEXT
+                ''')
                 
-                # Check existing columns
-                cursor.execute("PRAGMA table_info(detections)")
-                existing_columns = [col[1] for col in cursor.fetchall()]
-                
-                # Add image_path if not exists
-                if 'image_path' not in existing_columns:
-                    cursor.execute('''
-                        ALTER TABLE detections 
-                        ADD COLUMN image_path TEXT
-                    ''')
-                
-                # Add last_updated if not exists
-                if 'last_updated' not in existing_columns:
-                    cursor.execute('''
-                        ALTER TABLE detections 
-                        ADD COLUMN last_updated TIMESTAMP
-                    ''')
+                cursor.execute('''
+                    ALTER TABLE detections 
+                    ADD COLUMN last_updated TIMESTAMP
+                ''')
                 
                 # Create detection logs table
                 cursor.execute('''
@@ -584,7 +536,6 @@ def init_database():
                     ON detections(detection_date)
                 ''')
                 
-                # Record migration
                 cursor.execute("INSERT INTO migrations (version) VALUES (5)")
                 conn.commit()
                 current_version = 5
@@ -648,7 +599,7 @@ def init_database():
 if not init_database():
     st.error("Failed to initialize database. Please check the logs.")
     st.stop()
-    
+        
 # 👥 Patient Management
 # -------------------------------
 def add_patient(full_name, gender, age, village, traditional_authority, district, marital_status):
@@ -1394,8 +1345,7 @@ def restore_message(message_id):
 # 🔐 Authentication UI
 # -------------------------------
 def show_auth_page():
-    """Show login/register interface with robust session handling"""
-    # Custom CSS styling
+    """Show login/register interface with working switch"""
     st.markdown("""
     <style>
     .auth-container {
@@ -1436,33 +1386,12 @@ def show_auth_page():
         font-size: 0.9rem;
         margin-top: 0.5rem;
     }
-    .stButton>button {
-        width: 100%;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-    # Initialize auth mode with session state
+    # Initialize auth mode
     if 'auth_mode' not in st.session_state:
         st.session_state.auth_mode = "login"
-    
-    # Initialize force_rerun flag if not exists
-    if 'force_rerun' not in st.session_state:
-        st.session_state.force_rerun = False
-
-    # Handle forced rerun if needed
-    if st.session_state.force_rerun:
-        st.session_state.force_rerun = False
-        time.sleep(0.5)  # Small delay to prevent infinite loops
-        st.experimental_rerun()
-
-    def safe_rerun():
-        """Safe navigation with error handling"""
-        try:
-            st.experimental_rerun()
-        except:
-            st.session_state.force_rerun = True
-            st.experimental_rerun()
 
     # Login Form
     if st.session_state.auth_mode == "login":
@@ -1471,27 +1400,28 @@ def show_auth_page():
             st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Sign in to your account</div>', unsafe_allow_html=True)
             
-            with st.form("login_form", clear_on_submit=True):
-                email = st.text_input("Email", placeholder="your@email.com", key="login_email").strip()
-                password = st.text_input("Password", type="password", key="login_password")
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="your@email.com").strip()
+                password = st.text_input("Password", type="password")
                 
-                if st.form_submit_button("Sign In", type="primary", use_container_width=True):
+                login_button = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+                
+                if login_button:
                     if not email or not password:
                         st.error("Please enter both email and password", icon="⚠️")
                     else:
-                        with st.spinner("Authenticating..."):
-                            if login_user(email, password):
-                                st.success("Login successful! Redirecting...")
-                                time.sleep(1)  # Let user see success message
-                                safe_rerun()
-                            else:
-                                st.error("Login failed - please try again", icon="🚨")
+                        if login_user(email, password):
+                            st.success("Login successful! Redirecting...")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Login failed - please try again", icon="🚨")
 
             # Registration switch
             st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
             if st.button("Register here", key="to_register", use_container_width=True):
                 st.session_state.auth_mode = "register"
-                safe_rerun()
+                st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1502,44 +1432,42 @@ def show_auth_page():
             st.markdown('<div class="auth-title">Create Account</div>', unsafe_allow_html=True)
             st.markdown('<div class="auth-subtitle">Get started in seconds</div>', unsafe_allow_html=True)
             
-            with st.form("register_form", clear_on_submit=True):
-                full_name = st.text_input("Full Name", placeholder="John Doe", key="reg_name").strip()
-                email = st.text_input("Email", placeholder="your@email.com", key="reg_email").strip()
-                password = st.text_input("Password", type="password", key="reg_password")
-                confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm")
-                role = st.selectbox("Role", ["assistant", "doctor"], key="reg_role")
+            with st.form("register_form", clear_on_submit=False):
+                full_name = st.text_input("Full Name", placeholder="John Doe").strip()
+                email = st.text_input("Email", placeholder="your@email.com").strip()
+                password = st.text_input("Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                role = st.selectbox("Role", ["assistant", "doctor"])
                 
-                if st.form_submit_button("Register", type="primary", use_container_width=True):
-                    with st.spinner("Creating account..."):
-                        if not all([full_name, email, password, confirm_password]):
-                            st.error("Please fill in all fields", icon="⚠️")
-                        elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                            st.error("Please enter a valid email address", icon="✉️")
-                        elif len(password) < 8:
-                            st.error("Password must be at least 8 characters", icon="🔒")
-                        elif password != confirm_password:
-                            st.error("Passwords don't match", icon="🔁")
-                        elif get_user_by_email(email):
-                            st.error("Email already registered", icon="⛔")
+                register_button = st.form_submit_button("Register", type="primary", use_container_width=True)
+                
+                if register_button:
+                    if not all([full_name, email, password, confirm_password]):
+                        st.error("Please fill in all fields", icon="⚠️")
+                    elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+                        st.error("Please enter a valid email address", icon="✉️")
+                    elif len(password) < 8:
+                        st.error("Password must be at least 8 characters", icon="🔒")
+                    elif password != confirm_password:
+                        st.error("Passwords don't match", icon="🔁")
+                    elif get_user_by_email(email):
+                        st.error("Email already registered", icon="⛔")
+                    else:
+                        if create_user(full_name, email, password, role):
+                            st.success("Registration submitted for admin approval", icon="✅")
+                            time.sleep(1)
+                            st.session_state.auth_mode = "login"
+                            st.rerun()
                         else:
-                            if create_user(full_name, email, password, role):
-                                st.success("Registration submitted for admin approval", icon="✅")
-                                time.sleep(1)
-                                st.session_state.auth_mode = "login"
-                                safe_rerun()
-                            else:
-                                st.error("Registration failed - please try again", icon="🚨")
+                            st.error("Registration failed - please try again", icon="🚨")
 
             # Login switch
             st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
             if st.button("Sign in here", key="to_login", use_container_width=True):
                 st.session_state.auth_mode = "login"
-                safe_rerun()
+                st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
-
-    # Add a small delay to prevent rapid reruns
-    time.sleep(0.1)
 
 # -------------------------------
 # 🏠 Home Page
@@ -2376,29 +2304,113 @@ def show_appointments_page():
 # 📊 Analytics Page 
 # -------------------------------
 def show_analytics_page():
-    """Show analytics dashboard with interactive components"""
-    st.markdown('<h1 class="section-title">📊 Analytics Dashboard</h1>', unsafe_allow_html=True)
+    """Show Power BI-style analytics dashboard with interactive components"""
+    # Power BI-inspired styling
+    st.markdown("""
+    <style>
+    .dashboard-header {
+        font-family: 'Segoe UI', sans-serif;
+        color: #2F2F2F;
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid #F2F2F2;
+        padding-bottom: 0.5rem;
+    }
+    .metric-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        transition: all 0.3s ease;
+        border-left: 4px solid #0078D4;
+    }
+    .metric-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    .metric-title {
+        font-size: 0.9rem;
+        color: #666666;
+        margin-bottom: 0.5rem;
+    }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 600;
+        color: #0078D4;
+    }
+    .chart-container {
+        background: white;
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1.5rem;
+    }
+    .filter-panel {
+        background: #F8F8F8;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="dashboard-header">📊 Cataract Detection Analytics</div>', unsafe_allow_html=True)
     
     # Get data with patient info
     conn = sqlite3.connect(DB_NAME)
     try:
-        detections = pd.read_sql_query('''
+        # Default date range (last 30 days to today)
+        default_start = date.today() - timedelta(days=30)
+        default_end = date.today()
+        
+        # Date range selector with proper initialization
+        date_range = st.date_input(
+            "Select Date Range",
+            value=[default_start, default_end],
+            key="date_range_filter"
+        )
+        
+        # Handle case where only one date is selected
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+        else:
+            start_date, end_date = default_start, default_end
+            st.warning("Please select a date range - showing last 30 days by default")
+        
+        # Main data queries with date range filtering
+        detections = pd.read_sql_query(f'''
             SELECT d.*, p.full_name, p.gender, p.age, p.district, p.village
             FROM detections d
             JOIN patients p ON d.patient_id = p.id
-        ''', conn)
-        patients = pd.read_sql_query("SELECT * FROM patients", conn)
-        appointments = pd.read_sql_query("SELECT * FROM appointments", conn)
+            WHERE date(d.detection_date) BETWEEN ? AND ?
+        ''', conn, params=(start_date, end_date))
         
-        # Convert detection_date to datetime if it exists
+        patients = pd.read_sql_query(f'''
+            SELECT * FROM patients 
+            WHERE date(registration_date) BETWEEN ? AND ?
+        ''', conn, params=(start_date, end_date))
+        
+        appointments = pd.read_sql_query(f'''
+            SELECT a.*, p.full_name as patient_name, p.gender, p.age
+            FROM appointments a
+            LEFT JOIN patients p ON a.patient_id = p.id
+            WHERE date(a.appointment_date) BETWEEN ? AND ?
+        ''', conn, params=(start_date, end_date))
+        
+        # Convert dates to datetime
         if not detections.empty and 'detection_date' in detections.columns:
-            detections['detection_date'] = pd.to_datetime(detections['detection_date']).dt.date
+            detections['detection_date'] = pd.to_datetime(detections['detection_date'])
         
-        # Create tab interface
-        tab1, tab2, tab3 = st.tabs(["📈 Overview", "👁️ Detection Analytics", "📅 Appointment Analytics"])
+        if not appointments.empty and 'appointment_date' in appointments.columns:
+            appointments['appointment_date'] = pd.to_datetime(appointments['appointment_date'])
+        
+        # Create dashboard tabs
+        tab1, tab2, tab3 = st.tabs(["📊 Overview Dashboard", "👁️ Detection Insights", "📅 Appointment Analysis"])
         
         with tab1:
-            _display_overview_analytics(patients, detections, appointments)
+            _display_overview_dashboard(patients, detections, appointments)
         
         with tab2:
             _display_detection_analytics(detections)
@@ -2411,32 +2423,18 @@ def show_analytics_page():
     finally:
         conn.close()
 
-def _display_overview_analytics(patients: pd.DataFrame, detections: pd.DataFrame, appointments: pd.DataFrame):
-    """Display overview analytics with KPIs and trends"""
-    # Calculate KPIs
-    total_patients = len(patients)
-    total_detections = len(detections)
-    positive_cases = len(detections[detections['result'] != 'normal']) if not detections.empty else 0
-    avg_confidence = detections['confidence'].mean() if not detections.empty else 0
-    upcoming_appointments = len(appointments[appointments['status'] == 'Pending']) if not appointments.empty else 0
-    completed_appointments = len(appointments[appointments['status'] == 'Completed']) if not appointments.empty else 0
+def _display_overview_dashboard(patients: pd.DataFrame, detections: pd.DataFrame, appointments: pd.DataFrame):
+    """Display Power BI-style overview dashboard"""
     
-    # Display KPIs in grid
-    st.markdown('<div class="section-title">Key Metrics</div>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
+    # Row 1: Key Metrics
+    st.markdown("### Key Performance Indicators")
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown(f'''
         <div class="metric-card">
             <div class="metric-title">Total Patients</div>
-            <div class="metric-value">{total_patients}</div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-title">Avg. Confidence</div>
-            <div class="metric-value">{avg_confidence:.1f}%</div>
+            <div class="metric-value">{len(patients):,}</div>
         </div>
         ''', unsafe_allow_html=True)
     
@@ -2444,259 +2442,280 @@ def _display_overview_analytics(patients: pd.DataFrame, detections: pd.DataFrame
         st.markdown(f'''
         <div class="metric-card">
             <div class="metric-title">Total Detections</div>
-            <div class="metric-value">{total_detections}</div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-title">Positive Cases</div>
-            <div class="metric-value">{positive_cases}</div>
+            <div class="metric-value">{len(detections):,}</div>
         </div>
         ''', unsafe_allow_html=True)
     
     with col3:
+        positive_cases = len(detections[detections['result'] != 'normal']) if not detections.empty else 0
         st.markdown(f'''
         <div class="metric-card">
-            <div class="metric-title">Upcoming Appointments</div>
-            <div class="metric-value">{upcoming_appointments}</div>
-        </div>
-        ''', unsafe_allow_html=True)
-        
-        st.markdown(f'''
-        <div class="metric-card">
-            <div class="metric-title">Completed Appointments</div>
-            <div class="metric-value">{completed_appointments}</div>
+            <div class="metric-title">Positive Cases</div>
+            <div class="metric-value">{positive_cases:,}</div>
         </div>
         ''', unsafe_allow_html=True)
     
-    # Trends over time
-    st.markdown('<div class="section-title">Trends Over Time</div>', unsafe_allow_html=True)
+    with col4:
+        avg_confidence = detections['confidence'].mean() if not detections.empty else 0
+        st.markdown(f'''
+        <div class="metric-card">
+            <div class="metric-title">Avg Confidence</div>
+            <div class="metric-value">{avg_confidence:.1f}%</div>
+        </div>
+        ''', unsafe_allow_html=True)
     
-    if not detections.empty and 'detection_date' in detections.columns:
-        # Monthly detection trend
-        detections['month'] = pd.to_datetime(detections['detection_date']).dt.to_period('M')
-        monthly_counts = detections.groupby('month').size().reset_index()
-        monthly_counts.columns = ['Month', 'Count']
-        monthly_counts['Month'] = monthly_counts['Month'].astype(str)
-        
-        fig = px.line(
-            monthly_counts, 
-            x='Month', 
-            y='Count',
-            title="Monthly Detection Trend",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # Row 2: Main Charts
+    st.markdown("### Trends & Distributions")
+    col1, col2 = st.columns(2)
     
-    if not appointments.empty and 'appointment_date' in appointments.columns:
-        # Monthly appointment trend
-        appointments['month'] = pd.to_datetime(appointments['appointment_date']).dt.to_period('M')
-        appt_monthly = appointments.groupby(['month', 'status']).size().reset_index()
-        appt_monthly.columns = ['Month', 'Status', 'Count']
-        appt_monthly['Month'] = appt_monthly['Month'].astype(str)
-        
-        fig = px.bar(
-            appt_monthly,
-            x='Month',
-            y='Count',
-            color='Status',
-            title="Monthly Appointment Status",
-            barmode='stack',
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    with col1:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Detection Trend**")
+            if not detections.empty and 'detection_date' in detections.columns:
+                daily_counts = detections.resample('D', on='detection_date').size().reset_index()
+                daily_counts.columns = ['Date', 'Count']
+                fig = px.line(daily_counts, x='Date', y='Count', 
+                             template="plotly_white",
+                             color_discrete_sequence=['#0078D4'])
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Detection Results**")
+            if not detections.empty:
+                result_counts = detections['result'].value_counts().reset_index()
+                result_counts.columns = ['Result', 'Count']
+                fig = px.pie(result_counts, values='Count', names='Result',
+                            template="plotly_white",
+                            color_discrete_sequence=px.colors.qualitative.Prism)
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Row 3: Secondary Charts
+    st.markdown("### Detailed Metrics")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Age Distribution**")
+            if not detections.empty:
+                fig = px.histogram(detections, x='age', nbins=20,
+                                  template="plotly_white",
+                                  color_discrete_sequence=['#0078D4'])
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Appointment Status**")
+            if not appointments.empty and 'status' in appointments.columns:
+                status_counts = appointments['status'].value_counts().reset_index()
+                status_counts.columns = ['Status', 'Count']
+                fig = px.bar(status_counts, x='Status', y='Count',
+                            template="plotly_white",
+                            color='Status',
+                            color_discrete_sequence=px.colors.qualitative.Prism)
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
 def _display_detection_analytics(detections: pd.DataFrame):
-    """Display detection-specific analytics"""
-    st.markdown('<div class="section-title">Detection Analytics</div>', unsafe_allow_html=True)
+    """Enhanced detection analytics with Power BI styling"""
+    st.markdown("### Detection Analytics")
     
     if detections.empty:
         st.info("No detection data available")
         return
     
-    # Filters
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        result_filter = st.multiselect(
-            "Filter Results",
-            options=detections['result'].unique(),
-            default=detections['result'].unique()
-        )
-    with col2:
+    # Filter panel
+    with st.container():
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            result_filter = st.multiselect(
+                "Filter by Result",
+                options=detections['result'].unique(),
+                default=detections['result'].unique()
+            )
+        
+        with col2:
+            gender_filter = st.multiselect(
+                "Filter by Gender",
+                options=detections['gender'].unique(),
+                default=detections['gender'].unique()
+            )
+        
+        with col3:
+            district_filter = st.multiselect(
+                "Filter by District",
+                options=detections['district'].unique(),
+                default=detections['district'].unique()
+            )
+        
+        # Handle age range slider safely
+        min_age = int(detections['age'].min()) if not detections.empty else 0
+        max_age = int(detections['age'].max()) if not detections.empty else 100
+        
+        # Ensure min_age is less than max_age
+        if min_age >= max_age:
+            max_age = min_age + 1  # Adjust max_age if they're equal
+            
         age_range = st.slider(
             "Age Range",
-            min_value=int(detections['age'].min()) if not detections.empty else 0,
-            max_value=int(detections['age'].max()) if not detections.empty else 100,
-            value=(
-                int(detections['age'].min()) if not detections.empty else 0,
-                int(detections['age'].max()) if not detections.empty else 100
-            )
-        )
-    with col3:
-        district_filter = st.multiselect(
-            "Filter District",
-            options=detections['district'].unique(),
-            default=detections['district'].unique()
-        )
+            min_value=min_age,
+            max_value=max_age,
+            value=(min_age, max_age))
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Apply filters
     filtered = detections[
         (detections['result'].isin(result_filter)) &
+        (detections['gender'].isin(gender_filter)) &
+        (detections['district'].isin(district_filter)) &
         (detections['age'] >= age_range[0]) &
-        (detections['age'] <= age_range[1]) &
-        (detections['district'].isin(district_filter))
+        (detections['age'] <= age_range[1])
     ]
     
     if filtered.empty:
         st.warning("No data matching filters")
         return
     
-    # Visualizations in tabs
-    tab1, tab2, tab3 = st.tabs(["Results Breakdown", "Confidence Analysis", "Demographics"])
+    # Visualizations
+    col1, col2 = st.columns(2)
     
-    with tab1:
-        # Results breakdown
-        result_counts = filtered['result'].value_counts().reset_index()
-        result_counts.columns = ['Result', 'Count']
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.pie(
-                result_counts, 
-                values='Count', 
-                names='Result',
-                title="Result Distribution",
-                height=400
-            )
+    with col1:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Confidence Distribution**")
+            fig = px.box(filtered, x='result', y='confidence', color='result',
+                        template="plotly_white",
+                        color_discrete_sequence=px.colors.qualitative.Prism)
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            fig = px.bar(
-                result_counts,
-                x='Result',
-                y='Count',
-                color='Result',
-                title="Results by Count",
-                height=400
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    with tab2:
-        # Confidence analysis
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.histogram(
-                filtered,
-                x='confidence',
-                nbins=20,
-                title="Confidence Distribution",
-                height=400
-            )
+    with col2:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Age vs Confidence**")
+            fig = px.scatter(filtered, x='age', y='confidence', color='result',
+                           template="plotly_white",
+                           color_discrete_sequence=px.colors.qualitative.Prism)
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            fig = px.box(
-                filtered,
-                x='result',
-                y='confidence',
-                color='result',
-                title="Confidence by Result",
-                height=400
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    with tab3:
-        # Demographics
-        col1, col2 = st.columns(2)
-        with col1:
-            gender_counts = filtered['gender'].value_counts().reset_index()
-            gender_counts.columns = ['Gender', 'Count']
-            
-            fig = px.pie(
-                gender_counts,
-                values='Count',
-                names='Gender',
-                title="Gender Distribution",
-                height=400
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            age_groups = pd.cut(
-                filtered['age'],
-                bins=[0, 18, 30, 45, 60, 100],
-                labels=['0-18', '19-30', '31-45', '46-60', '60+']
-            )
-            age_counts = age_groups.value_counts().reset_index()
-            age_counts.columns = ['Age Group', 'Count']
-            
-            fig = px.bar(
-                age_counts,
-                x='Age Group',
-                y='Count',
-                title="Age Group Distribution",
-                height=400
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # Detailed data
-    st.markdown('<div class="section-title">Detailed Data</div>', unsafe_allow_html=True)
-    st.dataframe(filtered, use_container_width=True)
+    # Detailed data view
+    with st.expander("🔍 View Detailed Data"):
+        st.dataframe(filtered, use_container_width=True)
 
 def _display_appointment_analytics(appointments: pd.DataFrame):
-    """Display appointment-specific analytics"""
-    st.markdown('<div class="section-title">Appointment Analytics</div>', unsafe_allow_html=True)
+    """Enhanced appointment analytics with Power BI styling"""
+    st.markdown("### Appointment Analytics")
     
     if appointments.empty:
         st.info("No appointment data available")
         return
     
-    # Status breakdown
-    status_counts = appointments['status'].value_counts().reset_index()
-    status_counts.columns = ['Status', 'Count']
+    # Filter panel
+    with st.container():
+        st.markdown('<div class="filter-panel">', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            status_filter = st.multiselect(
+                "Filter by Status",
+                options=appointments['status'].unique(),
+                default=appointments['status'].unique()
+            )
+        
+        with col2:
+            if 'doctor_email' in appointments.columns:
+                doctor_filter = st.multiselect(
+                    "Filter by Doctor",
+                    options=appointments['doctor_email'].unique(),
+                    default=appointments['doctor_email'].unique()
+                )
+        st.markdown('</div>', unsafe_allow_html=True)
     
+    # Apply filters
+    filtered = appointments[appointments['status'].isin(status_filter)]
+    if 'doctor_email' in appointments.columns:
+        filtered = filtered[filtered['doctor_email'].isin(doctor_filter)]
+    
+    if filtered.empty:
+        st.warning("No data matching filters")
+        return
+    
+    # Visualizations
     col1, col2 = st.columns(2)
+    
     with col1:
-        fig = px.pie(
-            status_counts,
-            values='Count',
-            names='Status',
-            title="Appointment Status",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Appointments Over Time**")
+            if 'appointment_date' in filtered.columns:
+                daily_counts = filtered.resample('D', on='appointment_date').size().reset_index()
+                daily_counts.columns = ['Date', 'Count']
+                fig = px.line(daily_counts, x='Date', y='Count',
+                             template="plotly_white",
+                             color_discrete_sequence=['#0078D4'])
+                fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
-        fig = px.bar(
-            status_counts,
-            x='Status',
-            y='Count',
-            color='Status',
-            title="Appointments by Status",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Status Distribution**")
+            status_counts = filtered['status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig = px.pie(status_counts, values='Count', names='Status',
+                        template="plotly_white",
+                        color_discrete_sequence=px.colors.qualitative.Prism)
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    # Doctor workload
-    if 'doctor_email' in appointments.columns:
-        doctor_counts = appointments['doctor_email'].value_counts().reset_index()
-        doctor_counts.columns = ['Doctor', 'Count']
-        
-        st.markdown('<div class="section-title">Doctor Workload</div>', unsafe_allow_html=True)
-        fig = px.bar(
-            doctor_counts,
-            x='Doctor',
-            y='Count',
-            title="Appointments per Doctor",
-            height=400
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # Doctor workload if available
+    if 'doctor_email' in filtered.columns:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Doctor Workload**")
+            doctor_counts = filtered['doctor_email'].value_counts().reset_index()
+            doctor_counts.columns = ['Doctor', 'Count']
+            fig = px.bar(doctor_counts, x='Doctor', y='Count',
+                        template="plotly_white",
+                        color='Doctor',
+                        color_discrete_sequence=px.colors.qualitative.Prism)
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
     
-    # Detailed data
-    st.markdown('<div class="section-title">Detailed Data</div>', unsafe_allow_html=True)
-    st.dataframe(appointments, use_container_width=True)
-
+    # Patient demographics for appointments
+    if not filtered.empty and 'age' in filtered.columns:
+        with st.container():
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("**Patient Age Distribution**")
+            fig = px.histogram(filtered, x='age', nbins=20,
+                             template="plotly_white",
+                             color_discrete_sequence=['#0078D4'])
+            fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Detailed data view
+    with st.expander("🔍 View Detailed Data"):
+        st.dataframe(filtered, use_container_width=True)
 # -------------------------------
 # 📧 Messaging Page
 # -------------------------------
@@ -2992,7 +3011,7 @@ def show_admin_panel():
     st.markdown("""
     <style>
     .admin-tab {
-        padding: 1rem;
+        padding: 1.5rem;
         border-radius: 0.5rem;
         background: rgba(255,255,255,0.8);
         margin-bottom: 1rem;
@@ -3022,6 +3041,18 @@ def show_admin_panel():
         display: flex;
         gap: 0.5rem;
         margin-top: 1rem;
+    }
+    /* Smaller action buttons */
+    .stButton>button {
+        padding: 0.25rem 0.75rem !important;
+        font-size: 0.8rem !important;
+        min-height: 1.5rem !important;
+    }
+    /* Smaller headers */
+    .small-header {
+        font-size: 1.2rem !important;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -3289,85 +3320,51 @@ def _delete_user(user_id):
 # 🤖 Model Management Functions
 # -------------------------------
 def _display_model_management():
-    """Display model management interface with improved error handling"""
+    """Display model management interface with proper row selection handling"""
     st.markdown("## Model Management")
-    
     # Current active model display
-    with st.container():
-        current_model = get_active_model_info()
-        if current_model:
-            st.markdown(f"""
-            <div class="model-info-card">
-                <h3>Active Model Information</h3>
-                <p><strong>Version:</strong> {current_model.get('version', 'N/A')}</p>
-                <p><strong>Description:</strong> {current_model.get('description', 'N/A')}</p>
-                <p><strong>Uploaded by:</strong> {current_model.get('uploaded_by', 'N/A')}</p>
-                <p><strong>Upload date:</strong> {current_model.get('upload_date', 'N/A')}</p>
-                <p><strong>Compatibility:</strong> {current_model.get('compatibility', 'standard')}</p>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.warning("No active model configured")
+    current_model = get_active_model_info()
+    if current_model:
+        st.markdown(f"""
+        <div class="model-card">
+            <h3>Active Model</h3>
+            <p><strong>Version:</strong> {current_model.get('version', 'N/A')}</p>
+            <p><strong>Description:</strong> {current_model.get('description', 'N/A')}</p>
+            <p><strong>Uploaded by:</strong> {current_model.get('uploaded_by', 'N/A')}</p>
+            <p><strong>Upload date:</strong> {current_model.get('upload_date', 'N/A')}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Model upload form with enhanced validation
+    # Model upload form
     with st.expander("📤 Upload New Model", expanded=False):
         with st.form("model_upload_form", clear_on_submit=True):
             new_model = st.file_uploader("Model file (.h5 or .keras)", 
-                                       type=["h5", "keras"],
-                                       help="Upload trained model in HDF5 or Keras format")
+                                       type=["h5", "keras"])
+            version = st.text_input("Version* (e.g., 1.0.0)")
+            description = st.text_area("Description")
+            release_notes = st.text_area("Release Notes")
             
-            version = st.text_input("Version* (e.g., 1.0.0)", 
-                                  help="Use semantic versioning format")
-            
-            description = st.text_area("Description",
-                                     help="Brief description of model purpose and features")
-            
-            release_notes = st.text_area("Release Notes",
-                                       help="What's new or changed in this version")
-            
-            if st.form_submit_button("🚀 Deploy Model", type="primary"):
+            if st.form_submit_button("🚀 Deploy Model"):
                 if new_model and version:
                     with st.spinner("Validating and deploying model..."):
                         _handle_model_upload(new_model, version, description, release_notes)
                 else:
                     st.warning("Please provide both model file and version number")
 
-    # Model history with enhanced delete confirmation
+    # Model history with proper selection handling
     st.markdown("## Model Versions History")
     models = _get_model_history()
     
     if not models.empty:
-        # Configure interactive grid
-        gb = GridOptionsBuilder.from_dataframe(models)
+        # Configure grid
+        gb = GridOptionsBuilder.from_dataframe(models[['version', 'description', 'uploaded_at', 'uploaded_by', 'is_active']])
         gb.configure_default_column(
             filterable=True,
             sortable=True,
             resizable=True
         )
         
-        gb.configure_column("version", header_name="Version")
-        gb.configure_column("uploaded_at", header_name="Upload Date")
-        gb.configure_column("uploaded_by", header_name="Uploaded By")
-        gb.configure_column("is_active", header_name="Active", width=100)
-        
-        # Add delete action with confirmation
-        gb.configure_column(
-            "Delete",
-            cellRenderer="""
-                <button onclick="alert('Are you sure?') || 
-                                window.parent.postMessage(
-                                    {type: 'deleteModel', modelId: params.data.id}, 
-                                    '*'
-                                )"
-                        style="color: white; background-color: #ff4b4b; 
-                               border: none; border-radius: 3px; padding: 2px 8px;">
-                    Delete
-                </button>
-            """,
-            width=120,
-            pinned="right"
-        )
-        
+        gb.configure_selection('single', use_checkbox=True)
         grid_options = gb.build()
         
         # Display the grid
@@ -3377,250 +3374,45 @@ def _display_model_management():
             height=400,
             width='100%',
             theme='streamlit',
-            update_mode=GridUpdateMode.MODEL_CHANGED,
-            allow_unsafe_jscode=True,
+            update_mode=GridUpdateMode.SELECTION_CHANGED,
             key='models_grid'
         )
         
-        # Handle delete actions
-        if 'deleteModel' in st.session_state:
-            model_id = st.session_state.deleteModel
-            if _confirm_delete_model(model_id):
-                if delete_model_version(model_id):
-                    st.success("Model version deleted successfully!")
-                    del st.session_state.deleteModel
-                    time.sleep(1)
-                    st.experimental_rerun()
+        # Properly handle selected rows
+        selected_rows = grid_response['selected_rows']
+        has_selection = False
+        selected_model = None
+        
+        # Check if any rows are selected (works for both DataFrame and list)
+        if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+            has_selection = True
+            selected_model = selected_rows.iloc[0].to_dict()
+        elif isinstance(selected_rows, list) and len(selected_rows) > 0:
+            has_selection = True
+            selected_model = selected_rows[0]
+        
+        # Show actions only if a row is selected
+        if has_selection and selected_model:
+            st.markdown("### Selected Model Actions")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Delete Selected Model", type="secondary"):
+                    if _confirm_delete_model(selected_model['id']):
+                        if delete_model_version(selected_model['id']):
+                            st.success("Model version deleted successfully!")
+                            time.sleep(1)
+                            st.rerun()
+            
+            with col2:
+                is_active = selected_model.get('is_active', '') == '✅'
+                if st.button("⭐ Set as Active", disabled=is_active):
+                    if _set_active_model(selected_model['id']):
+                        st.success("Model set as active!")
+                        time.sleep(1)
+                        st.rerun()
     else:
         st.info("No model versions found in the system")
-
-def _handle_model_upload(model_file, version, description, release_notes):
-    """Enhanced model upload handler with advanced compatibility checks"""
-    try:
-        # Validate version format
-        if not re.match(r'^\d+\.\d+\.\d+$', version):
-            raise ValueError("Use semantic versioning format (e.g., 1.0.0)")
-        
-        # Create models directory
-        models_dir = REPO_ROOT / MODELS_DIR
-        models_dir.mkdir(exist_ok=True)
-        
-        # Save to temporary file first
-        temp_ext = os.path.splitext(model_file.name)[1]
-        temp_path = models_dir / f"temp_{datetime.now().strftime('%Y%m%d%H%M%S')}{temp_ext}"
-        
-        with open(temp_path, "wb") as f:
-            f.write(model_file.getbuffer())
-        
-        # Try multiple loading strategies
-        loading_attempts = [
-            {
-                "name": "Standard load",
-                "kwargs": {}
-            },
-            {
-                "name": "Custom objects with legacy Adam",
-                "kwargs": {
-                    "custom_objects": {
-                        'Functional': tf.keras.models.Model,
-                        'Adam': tf.keras.optimizers.legacy.Adam
-                    },
-                    "compile": False
-                }
-            },
-            {
-                "name": "Custom objects with all legacy optimizers",
-                "kwargs": {
-                    "custom_objects": {
-                        'Functional': tf.keras.models.Model,
-                        'Adam': tf.keras.optimizers.legacy.Adam,
-                        'Adadelta': tf.keras.optimizers.legacy.Adadelta,
-                        'Adagrad': tf.keras.optimizers.legacy.Adagrad,
-                        'Adamax': tf.keras.optimizers.legacy.Adamax,
-                        'Ftrl': tf.keras.optimizers.legacy.Ftrl,
-                        'Nadam': tf.keras.optimizers.legacy.Nadam,
-                        'RMSprop': tf.keras.optimizers.legacy.RMSprop,
-                        'SGD': tf.keras.optimizers.legacy.SGD
-                    },
-                    "compile": False
-                }
-            },
-            {
-                "name": "Skip incompatible layers",
-                "kwargs": {
-                    "custom_objects": {
-                        'Functional': tf.keras.models.Model,
-                        'batch_shape': None,
-                        '_tf_api_names': None,
-                        '_keras_api_names': None
-                    },
-                    "compile": False
-                }
-            }
-        ]
-        
-        model = None
-        compatibility_mode = "unknown"
-        load_errors = []
-        
-        for attempt in loading_attempts:
-            try:
-                st.write(f"Attempting {attempt['name']}...")
-                model = load_model(temp_path, **attempt['kwargs'])
-                compatibility_mode = attempt['name']
-                break
-            except Exception as e:
-                load_errors.append(f"{attempt['name']} failed: {str(e)}")
-                continue
-        
-        if model is None:
-            temp_path.unlink(missing_ok=True)
-            error_msg = "All loading attempts failed:\n" + "\n".join(load_errors)
-            raise ValueError(error_msg)
-        
-        # Validate model structure
-        validation_checks = [
-            (hasattr(model, 'predict'), "Model missing predict method"),
-            (hasattr(model, 'input_shape'), "Model missing input_shape"),
-            (hasattr(model, 'output_shape'), "Model missing output_shape"),
-            (model.input_shape[1:] == (*MODEL_INPUT_SIZE, 3), 
-             f"Model expects input shape {model.input_shape[1:]}, system requires {(*MODEL_INPUT_SIZE, 3)}"),
-            (model.output_shape[1] == len(CLASS_NAMES),
-             f"Model has {model.output_shape[1]} outputs, expected {len(CLASS_NAMES)}")
-        ]
-        
-        for check, error_msg in validation_checks:
-            if not check:
-                temp_path.unlink(missing_ok=True)
-                raise ValueError(error_msg)
-        
-        # If validation passed, save to final location
-        model_filename = f"model_v{version.replace('.', '_')}.h5"
-        model_path = models_dir / model_filename
-        os.rename(temp_path, model_path)
-        
-        # Store in database
-        conn = sqlite3.connect(DB_NAME)
-        try:
-            cursor = conn.cursor()
-            
-            # Insert model record
-            cursor.execute('''
-                INSERT INTO model_versions 
-                (version, description, release_notes, path, uploaded_by, performance_metrics)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                version,
-                description,
-                release_notes,
-                str(model_path.relative_to(REPO_ROOT)),
-                st.session_state.user_id,
-                json.dumps({
-                    "input_shape": str(model.input_shape),
-                    "output_shape": str(model.output_shape),
-                    "parameters": model.count_params(),
-                    "compatibility": compatibility_mode,
-                    "layers": len(model.layers),
-                    "loading_attempts": load_errors,
-                    "upload_timestamp": datetime.now().isoformat(),
-                    "tensorflow_version": tf.__version__
-                })
-            ))
-            
-            # Set as active model
-            cursor.execute('''
-                INSERT OR REPLACE INTO system_settings 
-                (key, value) VALUES ('active_model', ?)
-            ''', (str(model_path.relative_to(REPO_ROOT)),))
-            
-            conn.commit()
-            
-            st.success(f"Model v{version} deployed successfully using {compatibility_mode}!")
-            st.balloons()
-            time.sleep(1)
-            st.experimental_rerun()
-            
-        except sqlite3.Error as e:
-            conn.rollback()
-            model_path.unlink(missing_ok=True)
-            raise ValueError(f"Database error: {str(e)}")
-            
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        st.error(f"🚨 Upload failed: {str(e)}")
-        st.info("💡 Try exporting your model with: `model.save('model.keras', save_format='tf')`")
-        if 'temp_path' in locals() and temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-        if 'model_path' in locals() and model_path.exists():
-            model_path.unlink(missing_ok=True)
-            
-def delete_model_version(model_id):
-    """Safely delete a model version with confirmation"""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        # Get model info first
-        cursor.execute('''
-            SELECT path, version FROM model_versions 
-            WHERE id = ?
-        ''', (model_id,))
-        result = cursor.fetchone()
-        
-        if not result:
-            raise ValueError("Model not found")
-            
-        model_path, version = result
-        abs_path = REPO_ROOT / model_path
-        
-        # Check if this is the active model
-        cursor.execute('''
-            SELECT value FROM system_settings 
-            WHERE key = 'active_model'
-        ''')
-        active_path = cursor.fetchone()
-        
-        if active_path and active_path[0] == model_path:
-            raise ValueError("Cannot delete the active model. Set another model as active first.")
-        
-        # Delete from database
-        cursor.execute('''
-            DELETE FROM model_versions 
-            WHERE id = ?
-        ''', (model_id,))
-        
-        # Delete the file if exists
-        if abs_path.exists():
-            abs_path.unlink()
-        
-        conn.commit()
-        return True
-        
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        st.error(f"Failed to delete model v{version if 'version' in locals() else 'unknown'}: {str(e)}")
-        return False
-        
-    finally:
-        if conn:
-            conn.close()
-
-def _confirm_delete_model(model_id):
-    """Confirmation dialog for model deletion"""
-    with st.container():
-        st.warning("⚠️ Are you sure you want to permanently delete this model version?")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Confirm Delete", type="primary"):
-                return True
-        with col2:
-            if st.button("❌ Cancel"):
-                return False
-    return False
 
 # -------------------------------
 # ⚙️ System Settings Functions
@@ -3843,10 +3635,10 @@ def _confirm_delete_model(model_id):
     return False
 
 # -------------------------------
-# 🧭 Enhanced Main Navigation
+# 🧭 Main Navigation
 # -------------------------------
 def main():
-    """Main application entry point with robust error handling"""
+    """Main application entry point"""
     # Set page config (MUST BE FIRST STREAMLIT COMMAND)
     st.set_page_config(
         page_title="Munthandiz Cataract Detection",
@@ -3855,32 +3647,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize critical session variables
-    if 'nav' not in st.session_state:
-        st.session_state.nav = "Home"
-    if 'force_rerun' not in st.session_state:
-        st.session_state.force_rerun = False
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-
-    # Safe rerun function with error handling
-    def safe_rerun(delay=0.5):
-        """Safe navigation wrapper with error handling"""
-        try:
-            time.sleep(delay)  # Small delay for UI updates
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Navigation error: {str(e)}")
-            st.session_state.force_rerun = True
-            time.sleep(1)
-            st.experimental_rerun()
-
-    # Handle forced rerun if needed
-    if st.session_state.force_rerun:
-        st.session_state.force_rerun = False
-        safe_rerun()
-
-     # Then load custom CSS
+    # Then load custom CSS
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Playfair+Display:wght@500;700&display=swap');
@@ -3890,7 +3657,7 @@ def main():
         font-size: 14px;
         line-height: 1.5;
         font-weight: 400;
-        color: #2d3748;
+        color: #F0F2F3FF 0%;
     }
 
     .main-title, .section-title, .hero-title, .step-title {
@@ -4068,90 +3835,78 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-
+    
     # Verify and maintain session state
     if not verify_session():
         show_auth_page()
         return
-
-    # Sidebar navigation with enhanced error handling
-    try:
-        with st.sidebar:
-            st.markdown(f"""
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #2d3748;">Munthandiz</h1>
-                <div style="font-size: 0.9rem; color: #4a5568;">Cataract Detection System</div>
-                <div style="margin-top: 1rem; font-size: 0.8rem; color: #718096;">Welcome, {st.session_state.get('user_name', 'Guest')}</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Navigation menu
-            menu_options = {
-                "🏠 Home": "Home",
-                "👁️ Detection": "Detection",
-                "📅 Appointments": "Appointments",
-                "📊 Analytics": "Analytics",
-                "📧 Messages": "Messages"
-            }
-            
-            # Add admin panel if user is admin
-            if st.session_state.get('user_role') == "admin":
-                menu_options["⚙️ Admin"] = "Admin"
-            
-            # Create navigation buttons
-            for label, page in menu_options.items():
-                if st.button(label, key=f"nav_{page}", use_container_width=True):
-                    st.session_state.nav = page
-                    safe_rerun()
-            
-            # Logout button
-            st.markdown("---")
-            if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
-                logout_user()
-                st.session_state.clear()
-                st.session_state.nav = "Home"
-                safe_rerun()
-            
-            # System status
-            st.markdown("---")
-            st.markdown("""
-            <div style="font-size: 0.75rem; color: #718096; text-align: center;">
-                System Status: <span style="color: #38a169;">●</span> Operational
-                <br>v1.0.0
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Page routing with error handling
-        try:
-            if st.session_state.nav == "Home":
-                show_home_page()
-            elif st.session_state.nav == "Detection":
-                show_detection_page()
-            elif st.session_state.nav == "Appointments":
-                show_appointments_page()
-            elif st.session_state.nav == "Analytics":
-                show_analytics_page()
-            elif st.session_state.nav == "Messages":
-                show_messages_page()
-            elif st.session_state.nav == "Admin" and st.session_state.get('user_role') == "admin":
-                show_admin_panel()
-            else:
-                st.warning("Page not found")
-                st.session_state.nav = "Home"
-                safe_rerun()
-
-        except Exception as e:
-            st.error(f"Error loading page: {str(e)}")
-            st.button("Reload Page", on_click=safe_rerun)
-
-    except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        st.button("Restart App", on_click=lambda: (
-            st.session_state.clear(),
-            st.experimental_rerun()
-        ))
+    
+    # Initialize navigation state
+    if 'nav' not in st.session_state:
+        st.session_state.nav = "Home"
+    
+    # Sidebar navigation
+    with st.sidebar:
+        st.markdown(f"""
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h1 style="font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #98F5E1 0%;">Munthandiz</h1>
+            <div style="font-size: 0.9rem; color: #98F5E1 0%;">Cataract Detection System</div>
+            <div style="margin-top: 1rem; font-size: 0.8rem; color: #98F5E1 0%;">Welcome, {st.session_state.user_name}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Navigation menu
+        menu_options = {
+            "🏠 Home": "Home",
+            "👁️ Detection": "Detection",
+            "📅 Appointments": "Appointments",
+            "📊 Analytics": "Analytics",
+            "📧 Messages": "Messages"
+        }
+        
+        # Add admin panel if user is admin
+        if st.session_state.user_role == "admin":
+            menu_options["⚙️ Admin"] = "Admin"
+        
+        # Create navigation buttons
+        for label, page in menu_options.items():
+            if st.sidebar.button(label, use_container_width=True, key=f"nav_{page}"):
+                st.session_state.nav = page
+                st.rerun()
+        
+        # Logout button
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🚪 Logout", use_container_width=True):
+            logout_user()
+            st.session_state.clear()
+            st.rerun()
+        
+        # System status
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        <div style="font-size: 0.75rem; color: #718096; text-align: center;">
+            System Status: <span style="color: #38a169;">●</span> Operational
+            <br>v1.0.0
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Page routing
+    if st.session_state.nav == "Home":
+        show_home_page()
+    elif st.session_state.nav == "Detection":
+        show_detection_page()
+    elif st.session_state.nav == "Appointments":
+        show_appointments_page()
+    elif st.session_state.nav == "Analytics":
+        show_analytics_page()
+    elif st.session_state.nav == "Messages":
+        show_messages_page()
+    elif st.session_state.nav == "Admin" and st.session_state.user_role == "admin":
+        show_admin_panel()
+    else:
+        st.warning("Page not found")
+        st.session_state.nav = "Home"
+        st.rerun()
 
 if __name__ == "__main__":
-    # Initialize session state and run app
-    initialize_session_state()
     main()
