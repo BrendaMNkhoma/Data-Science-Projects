@@ -3959,9 +3959,122 @@ def _delete_user(user_id):
     finally:
         if conn:
             conn.close()
+
 # -------------------------------
 # 🤖 Model Management Functions
 # -------------------------------
+def _handle_model_upload(new_model, version, description, release_notes):
+    """Handle the upload and validation of new model versions"""
+    try:
+        # Create models directory if it doesn't exist
+        models_dir = REPO_ROOT / MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_filename = f"model_v{version}_{timestamp}.h5"
+        model_path = models_dir / model_filename
+        
+        # Save the uploaded file
+        with open(model_path, "wb") as f:
+            f.write(new_model.getbuffer())
+        
+        # Verify the model can be loaded
+        try:
+            model = load_model(model_path)
+            model_metrics = {
+                "input_shape": model.input_shape,
+                "output_shape": model.output_shape,
+                "num_layers": len(model.layers),
+                "trainable_params": model.count_params()
+            }
+        except Exception as e:
+            os.remove(model_path)
+            st.error(f"Invalid model file: {str(e)}")
+            return False
+        
+        # Save model metadata to database
+        conn = sqlite3.connect(DB_NAME)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO model_versions 
+                (version, description, release_notes, path, uploaded_by, performance_metrics)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                version,
+                description,
+                release_notes,
+                str(model_path.relative_to(REPO_ROOT)),
+                st.session_state.user_id,
+                json.dumps(model_metrics)
+            )
+            conn.commit()
+            st.success(f"Model version {version} uploaded successfully!")
+            return True
+        except sqlite3.IntegrityError:
+            st.error("A model with this version already exists")
+            return False
+        except Exception as e:
+            conn.rollback()
+            st.error(f"Database error: {str(e)}")
+            return False
+        finally:
+            conn.close()
+    except Exception as e:
+        st.error(f"Error handling model upload: {str(e)}")
+        return False
+
+def _set_active_model(model_id):
+    """Set a model version as the active model"""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # Get the model path
+        cursor.execute("SELECT path FROM model_versions WHERE id = ?", (model_id,))
+        model_path = cursor.fetchone()
+        
+        if model_path:
+            model_path = model_path[0]
+            
+            # Update system settings
+            cursor.execute('''
+                INSERT OR REPLACE INTO system_settings (key, value)
+                VALUES ('active_model', ?)
+            ''', (model_path,))
+            
+            conn.commit()
+            
+            # Clear model cache
+            if 'model' in st.session_state:
+                del st.session_state['model']
+            
+            return True
+        return False
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        st.error(f"Error setting active model: {str(e)}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def _confirm_delete_model(model_id):
+    """Show delete confirmation dialog"""
+    with st.container():
+        st.warning("Are you sure you want to permanently delete this model version?")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirm Delete", type="primary"):
+                return True
+        with col2:
+            if st.button("❌ Cancel"):
+                return False
+    return False
+
 def _display_model_management():
     """Display model management interface with proper row selection handling"""
     st.markdown("## Model Management")
@@ -3974,7 +4087,7 @@ def _display_model_management():
             <p><strong>Version:</strong> {current_model.get('version', 'N/A')}</p>
             <p><strong>Description:</strong> {current_model.get('description', 'N/A')}</p>
             <p><strong>Uploaded by:</strong> {current_model.get('uploaded_by', 'N/A')}</p>
-            <p><strong>Upload date:</strong> {current_model.get('upload_date', 'N/A')}</p>
+            <p><strong>Upload date:</strong> {current_model.get('uploaded_at', 'N/A')}</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -3990,7 +4103,8 @@ def _display_model_management():
             if st.form_submit_button("🚀 Deploy Model"):
                 if new_model and version:
                     with st.spinner("Validating and deploying model..."):
-                        _handle_model_upload(new_model, version, description, release_notes)
+                        if _handle_model_upload(new_model, version, description, release_notes):
+                            st.experimental_rerun()
                 else:
                     st.warning("Please provide both model file and version number")
 
@@ -4021,21 +4135,15 @@ def _display_model_management():
             key='models_grid'
         )
         
-        # Properly handle selected rows
+        # Get selected rows
         selected_rows = grid_response['selected_rows']
-        has_selection = False
         selected_model = None
         
-        # Check if any rows are selected (works for both DataFrame and list)
-        if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
-            has_selection = True
-            selected_model = selected_rows.iloc[0].to_dict()
-        elif isinstance(selected_rows, list) and len(selected_rows) > 0:
-            has_selection = True
-            selected_model = selected_rows[0]
+        if selected_rows:
+            selected_model = selected_rows[0] if isinstance(selected_rows, list) else selected_rows.iloc[0].to_dict()
         
         # Show actions only if a row is selected
-        if has_selection and selected_model:
+        if selected_model:
             st.markdown("### Selected Model Actions")
             col1, col2 = st.columns(2)
             
@@ -4056,7 +4164,7 @@ def _display_model_management():
                         st.experimental_rerun()
     else:
         st.info("No model versions found in the system")
-
+        
 # -------------------------------
 # ⚙️ System Settings Functions
 # -------------------------------
