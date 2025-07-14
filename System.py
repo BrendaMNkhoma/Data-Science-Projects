@@ -1346,6 +1346,15 @@ def restore_message(message_id):
 # -------------------------------
 def show_auth_page():
     """Show login/register interface with working switch and robust error handling"""
+    # Initialize session state variables
+    if 'auth_mode' not in st.session_state:
+        st.session_state.auth_mode = "login"
+    if 'login_attempts' not in st.session_state:
+        st.session_state.login_attempts = 0
+    if 'auth_processed' not in st.session_state:
+        st.session_state.auth_processed = False
+
+    # Your existing CSS styling
     st.markdown("""
     <style>
     .auth-container {
@@ -1397,12 +1406,6 @@ def show_auth_page():
     </style>
     """, unsafe_allow_html=True)
 
-    # Initialize auth mode and login attempts
-    if 'auth_mode' not in st.session_state:
-        st.session_state.auth_mode = "login"
-    if 'login_attempts' not in st.session_state:
-        st.session_state.login_attempts = 0
-
     # Login Form
     if st.session_state.auth_mode == "login":
         with st.container():
@@ -1414,33 +1417,29 @@ def show_auth_page():
                 email = st.text_input("Email", placeholder="your@email.com").strip()
                 password = st.text_input("Password", type="password")
                 
-                login_button = st.form_submit_button("Sign In", type="primary", use_container_width=True)
-                
-                if login_button:
+                if st.form_submit_button("Sign In", type="primary", use_container_width=True):
                     try:
                         if not email or not password:
                             st.error("Please enter both email and password", icon="⚠️")
                         else:
                             if login_user(email, password):
-                                # Reset login attempts on success
+                                # Reset state on successful login
                                 st.session_state.login_attempts = 0
-                                st.success("Login successful! Loading dashboard...")
-                                time.sleep(1)
-                                return  # Exit auth page instead of rerun
+                                st.session_state.auth_processed = True
+                                st.session_state.logged_in = True
+                                st.success("Login successful!")
+                                # Use success callback instead of rerun
+                                return
                             else:
-                                # Increment failed attempts
                                 st.session_state.login_attempts += 1
                                 if st.session_state.login_attempts >= 3:
                                     st.error("Too many failed attempts. Please try again later.", icon="⏱️")
-                                    time.sleep(2)
                                 else:
                                     st.error("Invalid email or password", icon="🔒")
                     except Exception as e:
-                        st.error("An error occurred during login. Please try again.", icon="⚠️")
+                        st.error("An error occurred during login", icon="⚠️")
                         print(f"Login error: {str(e)}")
 
-            # Registration switch
-            st.markdown('<div class="auth-switch">Don\'t have an account?</div>', unsafe_allow_html=True)
             if st.button("Register here", key="to_register", use_container_width=True):
                 st.session_state.auth_mode = "register"
                 st.experimental_rerun()
@@ -1461,9 +1460,7 @@ def show_auth_page():
                 confirm_password = st.text_input("Confirm Password", type="password")
                 role = st.selectbox("Role", ["assistant", "doctor"])
                 
-                register_button = st.form_submit_button("Register", type="primary", use_container_width=True)
-                
-                if register_button:
+                if st.form_submit_button("Register", type="primary", use_container_width=True):
                     try:
                         if not all([full_name, email, password, confirm_password]):
                             st.error("Please fill in all fields", icon="⚠️")
@@ -1478,17 +1475,14 @@ def show_auth_page():
                         else:
                             if create_user(full_name, email, password, role):
                                 st.success("Registration submitted for admin approval", icon="✅")
-                                time.sleep(1)
                                 st.session_state.auth_mode = "login"
                                 st.experimental_rerun()
                             else:
                                 st.error("Registration failed - please try again", icon="🚨")
                     except Exception as e:
-                        st.error("An error occurred during registration. Please try again.", icon="⚠️")
+                        st.error("An error occurred during registration", icon="⚠️")
                         print(f"Registration error: {str(e)}")
 
-            # Login switch
-            st.markdown('<div class="auth-switch">Already have an account?</div>', unsafe_allow_html=True)
             if st.button("Sign in here", key="to_login", use_container_width=True):
                 st.session_state.auth_mode = "login"
                 st.experimental_rerun()
