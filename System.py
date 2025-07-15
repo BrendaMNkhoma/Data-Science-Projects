@@ -4201,7 +4201,7 @@ def _display_model_management():
                 ORDER BY mv.uploaded_at DESC
             ''', conn)
             
-             if not models.empty:
+            if not models.empty:
                 # Add file existence check - fixed indentation here
                 models['exists'] = models['path'].apply(
                     lambda x: (REPO_ROOT / x).exists() if not os.path.isabs(x) else os.path.exists(x)
