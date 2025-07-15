@@ -3967,36 +3967,64 @@ def _delete_user(user_id):
 # -------------------------------
 # 🤖 Model Management Functions
 # -------------------------------
+def is_valid_keras_file(filepath, is_h5=False):
+    """Check if file has valid Keras signature"""
+    try:
+        if is_h5:
+            with h5py.File(filepath, 'r') as f:
+                return 'model_config' in f.attrs
+        else:
+            return tf.saved_model.contains_saved_model(str(filepath))
+    except:
+        return False
+
 def _handle_model_upload(new_model, version, description, release_notes):
     """Handle the upload and validation of new model versions with comprehensive checks"""
+    conn = None
     try:
         # Validate inputs
         if not all([new_model, version]):
             raise ValueError("Model file and version are required")
         
-        # Validate version format (semantic versioning)
+        # Check file extension
+        valid_extensions = ('.h5', '.keras')
+        if not new_model.name.lower().endswith(valid_extensions):
+            raise ValueError(f"Only {', '.join(valid_extensions)} files are accepted")
+        
+        # Check file size
+        MIN_MODEL_SIZE = 1024  # 1KB
+        MAX_MODEL_SIZE = 500 * 1024 * 1024  # 500MB
+        if new_model.size < MIN_MODEL_SIZE:
+            raise ValueError("Uploaded file is too small to be a valid model")
+        if new_model.size > MAX_MODEL_SIZE:
+            raise ValueError(f"Model file too large (max {MAX_MODEL_SIZE/1024/1024}MB allowed)")
+        
+        # Validate version format
         if not re.match(r'^\d+\.\d+\.\d+$', version):
             raise ValueError("Version must follow semantic versioning (e.g., 1.0.0)")
         
-        # Create models directory if it doesn't exist
+        # Create models directory
         models_dir = REPO_ROOT / MODELS_DIR
         models_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_filename = f"model_v{version}_{timestamp}.h5"
+        file_ext = '.h5' if new_model.name.lower().endswith('.h5') else '.keras'
+        model_filename = f"model_v{version}_{timestamp}{file_ext}"
         model_path = models_dir / model_filename
         
-        # First validate the model before saving
-        temp_path = None
+        # First save the file completely
+        with open(model_path, "wb") as f:
+            f.write(new_model.getbuffer())
+        
         try:
-            # Save to temp file for validation
-            temp_path = models_dir / f"temp_{model_filename}"
-            with open(temp_path, "wb") as f:
-                f.write(new_model.getbuffer())
+            # Verify file signature
+            is_h5 = file_ext == '.h5'
+            if not is_valid_keras_file(model_path, is_h5):
+                raise ValueError(f"Invalid {'HDF5' if is_h5 else 'SavedModel'} format")
             
-            # Validate the model can be loaded and has correct structure
-            model = load_model(temp_path)
+            # Load and validate model
+            model = tf.keras.models.load_model(model_path)
             
             # Verify model compatibility
             if model.input_shape[1:3] != MODEL_INPUT_SIZE:
@@ -4005,26 +4033,20 @@ def _handle_model_upload(new_model, version, description, release_notes):
             if model.output_shape[1] != len(CLASS_NAMES):
                 raise ValueError(f"Model has {model.output_shape[1]} output classes but system expects {len(CLASS_NAMES)}")
             
-            # If validation passes, move to final location
-            os.rename(temp_path, model_path)
+            # Get model metrics
+            model_metrics = {
+                "input_shape": model.input_shape,
+                "output_shape": model.output_shape,
+                "num_layers": len(model.layers),
+                "trainable_params": model.count_params(),
+                "compatible": True,
+                "upload_timestamp": timestamp,
+                "file_format": "HDF5" if is_h5 else "SavedModel",
+                "tensorflow_version": getattr(model, 'tensorflow_version', 'unknown')
+            }
             
-        except Exception as e:
-            if temp_path and temp_path.exists():
-                os.remove(temp_path)
-            raise e
-        
-        # Get model metrics
-        model_metrics = {
-            "input_shape": model.input_shape,
-            "output_shape": model.output_shape,
-            "num_layers": len(model.layers),
-            "trainable_params": model.count_params(),
-            "compatible": True,
-            "upload_timestamp": timestamp
-        }
-        
-        # Save model metadata to database
-        with sqlite3.connect(DB_NAME) as conn:
+            # Save model metadata to database
+            conn = sqlite3.connect(DB_NAME)
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO model_versions 
@@ -4039,10 +4061,16 @@ def _handle_model_upload(new_model, version, description, release_notes):
                 json.dumps(model_metrics)
             ))
             conn.commit()
-        
-        st.success(f"✅ Model version {version} uploaded and validated successfully!")
-        return True
-        
+            
+            st.success(f"✅ Model version {version} uploaded and validated successfully!")
+            return True
+            
+        except Exception as e:
+            # Clean up the file if validation fails
+            if model_path.exists():
+                os.remove(model_path)
+            raise e
+            
     except sqlite3.IntegrityError:
         st.error("❌ A model with this version already exists")
     except ValueError as e:
@@ -4050,9 +4078,11 @@ def _handle_model_upload(new_model, version, description, release_notes):
     except Exception as e:
         st.error(f"❌ Error handling model upload: {str(e)}")
     finally:
-        # Clean up if file was created but DB operation failed
-        if 'model_path' in locals() and model_path.exists() and not conn:
-            os.remove(model_path)
+        if conn:
+            conn.close()
+            # Clean up if file was created but DB operation failed
+            if 'model_path' in locals() and model_path.exists() and not conn:
+                os.remove(model_path)
     
     return False
 
@@ -4158,39 +4188,6 @@ def _set_active_model(model_id):
         st.error(f"❌ Error setting active model: {str(e)}")
         return False
 
-def _confirm_delete_model(model_id):
-    """Show delete confirmation dialog with model info"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT version, description FROM model_versions WHERE id = ?
-            ''', (model_id,))
-            model_info = cursor.fetchone()
-            
-            if model_info:
-                version, description = model_info
-                with st.container():
-                    st.markdown(f"""
-                    <div class="warning-box">
-                        <h3>Confirm Deletion</h3>
-                        <p><strong>Version:</strong> {version}</p>
-                        <p><strong>Description:</strong> {description or 'N/A'}</p>
-                        <p>This action cannot be undone!</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("✅ Confirm Delete", type="primary"):
-                            return True
-                    with col2:
-                        if st.button("❌ Cancel"):
-                            return False
-    except Exception as e:
-        st.error(f"❌ Error getting model info: {str(e)}")
-    return False
-
 def _display_model_management():
     """Display comprehensive model management interface"""
     st.markdown('<div class="section-title">Model Management</div>', unsafe_allow_html=True)
@@ -4211,8 +4208,16 @@ def _display_model_management():
     else:
         st.warning("⚠️ No active model configured - detections will not work")
 
-    # Model upload form
+    # Model upload form with improved guidance
     with st.expander("📤 Upload New Model Version", expanded=False):
+        st.info("""
+        ℹ️ Model file requirements:
+        - Must be a Keras .h5 (HDF5) or .keras (SavedModel) file
+        - Should be exported with the same TensorFlow version as the server
+        - Must match the expected input/output dimensions
+        - Maximum file size: 500MB
+        """)
+        
         with st.form("model_upload_form", clear_on_submit=True):
             new_model = st.file_uploader(
                 "Model file (.h5 or .keras)", 
@@ -4240,7 +4245,7 @@ def _display_model_management():
                 if new_model and version:
                     with st.spinner("Validating and uploading model..."):
                         if _handle_model_upload(new_model, version, description, release_notes):
-                            st.experimental_rerun()
+                            st.rerun()
                 else:
                     st.warning("Please provide both model file and version number")
 
@@ -4319,48 +4324,6 @@ def _display_model_management():
             
     except Exception as e:
         st.error(f"❌ Error loading model history: {str(e)}")
-
-def _get_model_history():
-    """Get model history from database with file existence check"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            models = pd.read_sql_query('''
-                SELECT 
-                    mv.id,
-                    mv.version, 
-                    mv.description,
-                    datetime(mv.uploaded_at, 'localtime') as uploaded_at,
-                    mv.path,
-                    (SELECT full_name FROM users WHERE id = mv.uploaded_by) as uploaded_by,
-                    CASE 
-                        WHEN mv.path = (SELECT value FROM system_settings WHERE key = 'active_model') 
-                        THEN '✅' 
-                        ELSE '' 
-                    END as is_active,
-                    json_extract(mv.performance_metrics, '$.input_shape') as input_shape,
-                    json_extract(mv.performance_metrics, '$.output_shape') as output_shape
-                FROM model_versions mv
-                ORDER BY mv.uploaded_at DESC
-            ''', conn)
-            
-            if not models.empty:
-                models['full_path'] = models['path'].apply(
-                    lambda x: str(REPO_ROOT / x) if x and not os.path.isabs(x) else x
-                )
-                models['exists'] = models['full_path'].apply(
-                    lambda x: os.path.exists(x) if x else False
-                )
-                
-                # Filter out models with missing files
-                invalid_models = models[~models['exists']]
-                if not invalid_models.empty:
-                    st.warning(f"⚠️ {len(invalid_models)} model files are missing from storage")
-                
-            return models
-            
-    except Exception as e:
-        st.error(f"❌ Database error: {str(e)}")
-        return pd.DataFrame()
         
 # -------------------------------
 # ⚙️ System Settings Functions
