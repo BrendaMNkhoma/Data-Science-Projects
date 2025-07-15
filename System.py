@@ -2463,24 +2463,13 @@ def show_detection_page():
             """)
             return  # Don't proceed if no active model
         
-        # Display model info with test button
-        col1, col2 = st.columns([3,1])
-        with col1:
-            st.success(f"""
-            ✅ **Active Model:** {model_info.get('version', 'Unknown')}
-            - **Uploaded:** {model_info.get('uploaded_at', 'N/A')}
-            - **By:** {model_info.get('uploaded_by', 'N/A')}
-            - **Path:** {model_info.get('path', 'N/A')}
-            """)
-        
-        with col2:
-            if st.button("Test Model", help="Verify the model loads correctly"):
-                with st.spinner("Loading model..."):
-                    model = load_detection_model()
-                    if model:
-                        st.success("✅ Model loaded successfully!")
-                    else:
-                        st.error("❌ Failed to load model - check model file")
+        # Display model info
+        st.success(f"""
+        ✅ **Active Model:** {model_info.get('version', 'Unknown')}
+        - **Uploaded:** {model_info.get('uploaded_at', 'N/A')}
+        - **By:** {model_info.get('uploaded_by', 'N/A')}
+        - **Path:** {model_info.get('path', 'N/A')}
+        """)
 
     # Main tabs
     tab1, tab2 = st.tabs(["New Detection", "Manage Detections"])
@@ -2538,7 +2527,6 @@ def show_detection_page():
                             if patient_id:
                                 st.session_state.selected_patient = get_patient_by_id(patient_id)
                                 st.success("Patient registered!")
-                                st.rerun()
 
         # Detection Interface (only if patient selected and model available)
         if st.session_state.selected_patient and model_info:
@@ -2595,7 +2583,6 @@ def show_detection_page():
                                         "confidence": confidence,
                                         "timestamp": datetime.now()
                                     }
-                                    st.rerun()
                         except Exception as e:
                             st.error(f"Analysis failed: {str(e)}")
                             if 'temp_file' in locals() and os.path.exists(temp_file):
@@ -2651,7 +2638,6 @@ def show_detection_page():
                             del st.session_state.detection_results
                             st.session_state.selected_patient = None
                             st.success("Detection saved successfully!")
-                            st.rerun()
                         else:
                             st.error("Failed to save detection")
 
@@ -2758,20 +2744,14 @@ def show_detection_page():
                             ):
                                 success += 1
                         st.success(f"Updated {success} records")
-                        st.rerun()
                 
                 with col2:
-                    if st.button("🔄 Refresh", key="refresh_data"):
-                        st.rerun()
-                
-                with col3:
                     if st.button("🗑️ Delete", type="primary", key="delete_selected"):
                         deleted = 0
                         for row in selected_rows:
                             if delete_detection(row['id']):
                                 deleted += 1
                         st.success(f"Deleted {deleted} records")
-                        st.rerun()
         else:
             st.info("No detections found matching filters")
             
