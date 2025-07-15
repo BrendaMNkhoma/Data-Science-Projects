@@ -2305,16 +2305,16 @@ def show_home_page():
 # 👁️ Detection Page 
 # -------------------------------
 def show_detection_page():
-    """Show the fully functional cataract detection interface with comprehensive error handling"""
+    """Show the cataract detection interface with simplified model loading"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
 
-    # Initialize session state for detection results
+    # Initialize session state
     if 'detection_results' not in st.session_state:
         st.session_state.detection_results = None
     if 'selected_patient' not in st.session_state:
         st.session_state.selected_patient = None
 
-    # Display current model info with validation
+    # Load model info - no validation
     model_info = get_active_model_info()
     with st.expander("ℹ️ Current Model Information", expanded=True):
         if model_info:
@@ -2322,12 +2322,7 @@ def show_detection_page():
             - **Version:** {model_info.get('version', 'N/A')}
             - **Description:** {model_info.get('description', 'N/A')}
             - **Uploaded by:** {model_info.get('uploaded_by', 'N/A')}
-            - **Input Size:** {MODEL_INPUT_SIZE[0]}x{MODEL_INPUT_SIZE[1]}
             """)
-            
-            # Show warning if model is incompatible
-            if model_info.get('metrics', {}).get('compatible', True) == False:
-                st.warning("⚠️ This model is marked as potentially incompatible")
         else:
             st.error("❌ No active model configured - detection unavailable")
 
@@ -2336,353 +2331,216 @@ def show_detection_page():
 
     # TAB 1: New Detection
     with tab1:
-        use_camera = st.checkbox("🎥 Use Camera", value=False, key="use_camera",
+        # Only enable camera if model exists
+        use_camera = st.checkbox("🎥 Use Camera", value=False, 
                                disabled=not model_info,
                                help="Camera disabled when no active model is configured")
 
         # Patient Selection Section
-        st.markdown('<div class="section-title">Patient Information</div>', unsafe_allow_html=True)
-        
-        # Using columns for better layout
+        st.markdown("### Patient Information")
         col1, col2 = st.columns(2)
         
         with col1:
             # Existing Patient Selection
-            with st.container():
-                st.markdown("#### Select Existing Patient")
-                try:
-                    patients = get_patients()
-                    if patients.empty:
-                        st.info("No patients found in database")
-                    else:
-                        patient_options = patients.apply(
-                            lambda x: f"{x['full_name']} ({x['age']}y, {x['village']})", 
-                            axis=1
-                        )
-                        selected_index = st.selectbox(
-                            "Choose patient", 
-                            range(len(patient_options)),
-                            format_func=lambda x: patient_options[x],
-                            key="patient_select"
-                        )
-                        if selected_index is not None:
-                            st.session_state.selected_patient = patients.iloc[selected_index].to_dict()
-                except Exception as e:
-                    st.error(f"❌ Failed to load patients: {str(e)}")
+            try:
+                patients = get_patients()
+                if patients.empty:
+                    st.info("No patients found")
+                else:
+                    patient_options = patients.apply(
+                        lambda x: f"{x['full_name']} ({x['age']}y, {x['village']})", 
+                        axis=1
+                    )
+                    selected_index = st.selectbox(
+                        "Choose patient", 
+                        range(len(patient_options)),
+                        format_func=lambda x: patient_options[x]
+                    )
+                    if selected_index is not None:
+                        st.session_state.selected_patient = patients.iloc[selected_index].to_dict()
+            except Exception as e:
+                st.error(f"Failed to load patients: {str(e)}")
 
         with col2:
             # New Patient Registration
-            with st.container():
-                st.markdown("#### Register New Patient")
-                with st.form("patient_form", clear_on_submit=True):
-                    full_name = st.text_input("Full Name*", max_chars=100)
-                    age = st.number_input("Age*", min_value=1, max_value=120, value=30)
-                    gender = st.selectbox("Gender*", ["Male", "Female", "Other"])
-                    village = st.text_input("Village*", max_chars=50)
-                    district = st.text_input("District*", max_chars=50)
-                    
-                    if st.form_submit_button("Register Patient"):
-                        if not all([full_name, age, village, district]):
-                            st.error("Please fill all required fields (*)")
-                        else:
-                            try:
-                                patient_id, patient = handle_new_patient(
-                                    full_name=full_name,
-                                    age=age,
-                                    gender=gender,
-                                    village=village,
-                                    district=district
-                                )
-                                if patient_id:
-                                    st.session_state.selected_patient = patient
-                                    st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Registration failed: {str(e)}")
+            with st.form("patient_form", clear_on_submit=True):
+                full_name = st.text_input("Full Name*")
+                age = st.number_input("Age*", min_value=1, max_value=120)
+                gender = st.selectbox("Gender*", ["Male", "Female", "Other"])
+                village = st.text_input("Village*")
+                district = st.text_input("District*")
+                
+                if st.form_submit_button("Register"):
+                    if not all([full_name, age, village, district]):
+                        st.error("Please fill all required fields (*)")
+                    else:
+                        try:
+                            patient_id, patient = handle_new_patient(
+                                full_name, age, gender, village, district
+                            )
+                            if patient_id:
+                                st.session_state.selected_patient = patient
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Registration failed: {str(e)}")
 
-        # Only show detection interface if patient is selected and model is available
+        # Detection Interface
         if st.session_state.selected_patient and model_info:
             patient = st.session_state.selected_patient
-            st.markdown('<div class="section-title">Patient Details</div>', unsafe_allow_html=True)
-            st.markdown(f"""
-            - **Name:** {patient['full_name']}
-            - **Age:** {patient['age']}
-            - **Gender:** {patient['gender']}
-            - **Location:** {patient['village']}, {patient['district']}
-            """)
+            st.markdown(f"### Examining: {patient['full_name']}")
 
-            # Image Capture Section
-            st.markdown('<div class="section-title">Eye Image Capture</div>', unsafe_allow_html=True)
-            
+            # Image Capture
             img = None
             try:
                 if use_camera:
-                    img = st.camera_input("Capture eye image", key="camera_capture",
-                                        help="Ensure proper lighting and focus")
+                    img = st.camera_input("Capture eye image")
                 else:
-                    img = st.file_uploader(
-                        "Upload eye image", 
-                        type=["jpg", "jpeg", "png"],
-                        accept_multiple_files=False,
-                        key="file_upload",
-                        help="Upload clear eye images for best results"
-                    )
+                    img = st.file_uploader("Upload eye image", type=["jpg", "jpeg", "png"])
             except Exception as e:
-                st.error(f"❌ Image capture error: {str(e)}")
+                st.error(f"Image capture error: {str(e)}")
 
             if img:
-                # Display preview with enhanced error handling
                 try:
-                    st.image(img, caption="Eye Image Preview", use_column_width=True)
+                    st.image(img, caption="Eye Image Preview")
                 except Exception as e:
-                    st.error(f"❌ Failed to display image: {str(e)}")
+                    st.error(f"Failed to display image: {str(e)}")
 
-                # Analysis button
-                if st.button("Analyze Image", key="analyze_btn", type="primary"):
+                if st.button("Analyze Image", type="primary"):
                     with st.spinner("Analyzing..."):
                         try:
-                            # Create temp directory with proper permissions
+                            # Save temp image
                             temp_dir = REPO_ROOT / "temp_images"
-                            temp_dir.mkdir(exist_ok=True, mode=0o755)
-                            
-                            # Generate unique filename
+                            temp_dir.mkdir(exist_ok=True)
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             temp_file = temp_dir / f"eye_{patient['id']}_{timestamp}.jpg"
                             
-                            # Save image with validation
-                            try:
-                                with open(temp_file, "wb") as f:
-                                    f.write(img.getbuffer() if hasattr(img, 'getbuffer') else img.getvalue())
-                            except Exception as e:
-                                raise ValueError(f"Failed to save image: {str(e)}")
+                            with open(temp_file, "wb") as f:
+                                f.write(img.getbuffer() if use_camera else img.getvalue())
 
-                            # Load model and predict
-                            model = load_detection_model()
-                            if model:
-                                predicted_class, confidence = predict_image(temp_file, model)
-                                if predicted_class:
-                                    st.session_state.detection_results = {
-                                        "patient_id": patient['id'],
-                                        "image_path": str(temp_file),
-                                        "predicted_class": predicted_class,
-                                        "confidence": confidence,
-                                        "timestamp": datetime.now()
-                                    }
-                                    st.rerun()
+                            # Load model directly without validation
+                            model = load_model(REPO_ROOT / model_info['path'])
+                            
+                            # Predict
+                            img_array = preprocess_image(Image.open(temp_file))
+                            predictions = model.predict(img_array)
+                            predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
+                            confidence = float(np.max(predictions[0]) * 100
+
+                            st.session_state.detection_results = {
+                                "patient_id": patient['id'],
+                                "image_path": str(temp_file),
+                                "predicted_class": predicted_class,
+                                "confidence": confidence
+                            }
+                            st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Analysis failed: {str(e)}")
+                            st.error(f"Analysis failed: {str(e)}")
                             if 'temp_file' in locals() and temp_file.exists():
-                                try:
-                                    temp_file.unlink()
-                                except:
-                                    pass
+                                temp_file.unlink()
 
             # Show results if available
-            if st.session_state.detection_results and st.session_state.detection_results['patient_id'] == patient['id']:
+            if st.session_state.detection_results:
                 results = st.session_state.detection_results
                 
-                st.markdown("### Analysis Results")
+                st.success(f"""
+                **Result:** {results['predicted_class'].replace('_', ' ').title()}  
+                **Confidence:** {results['confidence']:.2f}%
+                """)
                 
-                # Color coding for results
-                result_colors = {
-                    'normal': '#38a169',  # green
-                    'mild': '#dd6b20',    # orange
-                    'severe': '#e53e3e',   # red
-                    'conjunctival_growth': '#805ad5'  # purple
-                }
-                result_color = result_colors.get(results['predicted_class'], '#3182ce')  # blue as default
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"""
-                    **Patient:** {patient['full_name']}  
-                    **Age:** {patient['age']}  
-                    **Gender:** {patient['gender']}  
-                    **Location:** {patient['village']}, {patient['district']}
-                    """)
-                
-                with col2:
-                    st.markdown(f"""
-                    **Result:** <span style='color:{result_color}; font-weight:bold'>
-                        {results['predicted_class'].replace('_', ' ').title()}
-                    </span>  
-                    **Confidence:** {results['confidence']:.2f}%  
-                    **Date:** {results['timestamp'].strftime('%Y-%m-%d %H:%M')}
-                    """, unsafe_allow_html=True)
-                
-                # Show image preview if available
                 if results.get('image_path'):
                     try:
-                        st.image(results['image_path'], caption="Processed Eye Image", use_column_width=True)
+                        st.image(results['image_path'], use_column_width=True)
                     except:
                         pass
                 
                 # Save form
-                with st.form("save_detection_form"):
-                    notes = st.text_area("Clinical Notes", height=100,
-                                       placeholder="Enter clinical observations and recommendations...")
+                with st.form("save_detection"):
+                    notes = st.text_area("Notes")
                     
-                    if st.form_submit_button("💾 Save Detection", type="primary"):
+                    if st.form_submit_button("Save Detection"):
                         try:
                             detection_id = save_detection(
-                                patient_id=patient['id'],
-                                result=results['predicted_class'],
-                                confidence=results['confidence'],
-                                attended_by=st.session_state.user_name,
-                                notes=notes,
-                                image_path=results['image_path']
+                                patient['id'],
+                                results['predicted_class'],
+                                results['confidence'],
+                                st.session_state.user_id,
+                                notes,
+                                results['image_path']
                             )
                             
                             if detection_id:
-                                # Clean up
                                 if results.get('image_path'):
                                     try:
                                         Path(results['image_path']).unlink()
                                     except:
                                         pass
+                                st.success("Detection saved!")
                                 del st.session_state.detection_results
                                 st.session_state.selected_patient = None
-                                st.success("✅ Detection saved successfully!")
                                 st.rerun()
-                            else:
-                                st.error("❌ Failed to save detection")
                         except Exception as e:
-                            st.error(f"❌ Error saving detection: {str(e)}")
+                            st.error(f"Save failed: {str(e)}")
 
     # TAB 2: Detection History
     with tab2:
-        st.markdown('<div class="section-title">Detection History</div>', unsafe_allow_html=True)
+        st.markdown("### Detection History")
         
-        # Add filters
-        with st.expander("🔍 Filters", expanded=True):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                date_filter = st.date_input("Filter by date", key="date_filter")
-            with col2:
-                result_filter = st.multiselect(
-                    "Filter by result",
-                    options=CLASS_NAMES,
-                    default=[],
-                    key="result_filter"
-                )
-            with col3:
-                min_confidence = st.slider(
-                    "Minimum confidence %", 
-                    min_value=0, 
-                    max_value=100, 
-                    value=70,
-                    key="confidence_filter"
-                )
-
-        # Get filtered detections with error handling
         try:
             detections = get_detections()
             
-            if not detections.empty:
-                # Apply filters
-                if date_filter:
-                    detections = detections[pd.to_datetime(detections['detection_date']).dt.date == date_filter]
-                if result_filter:
-                    detections = detections[detections['result'].isin(result_filter)]
-                detections = detections[detections['confidence'] >= min_confidence]
-
             if detections.empty:
-                st.info("ℹ️ No detections found matching filters")
+                st.info("No detections found")
             else:
-                # Configure interactive grid
-                gb = GridOptionsBuilder.from_dataframe(detections)
-                gb.configure_default_column(
-                    filterable=True,
-                    sortable=True,
-                    resizable=True,
-                    wrapText=True
+                # Simple table view
+                st.dataframe(
+                    detections[['full_name', 'result', 'confidence', 'detection_date']],
+                    column_config={
+                        "full_name": "Patient",
+                        "result": "Result",
+                        "confidence": st.column_config.NumberColumn(
+                            "Confidence %",
+                            format="%.1f"
+                        ),
+                        "detection_date": "Date"
+                    },
+                    hide_index=True,
+                    use_container_width=True
                 )
                 
-                # Configure specific columns
-                gb.configure_column("result", header_name="Result", width=120)
-                gb.configure_column("confidence", header_name="Confidence %", width=100)
-                gb.configure_column("detection_date", header_name="Date", width=150)
-                gb.configure_column("full_name", header_name="Patient", width=150)
-                gb.configure_column("attended_by", header_name="Clinician", width=120)
-                
-                # Configure selection
-                gb.configure_selection(
-                    selection_mode="single",
-                    use_checkbox=False,
-                    rowMultiSelectWithClick=False
+                # Detailed view selector
+                detection_ids = detections['id'].tolist()
+                selected_id = st.selectbox(
+                    "View details for detection:",
+                    detection_ids,
+                    format_func=lambda x: f"Detection #{x}"
                 )
                 
-                grid_options = gb.build()
-
-                # Display the grid
-                grid_response = AgGrid(
-                    detections,
-                    gridOptions=grid_options,
-                    height=400,
-                    width='100%',
-                    theme='streamlit',
-                    update_mode=GridUpdateMode.SELECTION_CHANGED,
-                    key='detections_grid'
-                )
-
-                # Show details for selected detection
-                selected_rows = grid_response.get("selected_rows", [])
-                
-                if selected_rows:
-                    selected = selected_rows[0]
-                    st.markdown("---")
-                    st.markdown(f"### Detailed View: Detection #{selected['id']}")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("#### Patient Information")
+                if selected_id:
+                    detection = get_detection_details(selected_id)
+                    if detection:
                         st.markdown(f"""
-                        - **Name:** {selected['full_name']}
-                        - **Age:** {selected['age']}
-                        - **Gender:** {selected['gender']}
-                        - **Location:** {selected['village']}, {selected['district']}
+                        ### Detection #{detection['id']}
+                        **Patient:** {detection['full_name']}  
+                        **Result:** {detection['result'].replace('_', ' ').title()}  
+                        **Confidence:** {detection['confidence']:.2f}%  
+                        **Date:** {detection['detection_date']}
                         """)
-                    
-                    with col2:
-                        st.markdown("#### Detection Details")
-                        result_color = result_colors.get(selected['result'], '#3182ce')
-                        st.markdown(f"""
-                        - **Result:** <span style='color:{result_color}; font-weight:bold'>
-                            {selected['result'].replace('_', ' ').title()}
-                        </span>
-                        - **Confidence:** {selected['confidence']:.2f}%
-                        - **Date:** {selected['detection_date']}
-                        - **Attended by:** {selected['attended_by']}
-                        """, unsafe_allow_html=True)
-                    
-                    # Show image if available
-                    if selected.get('image_path'):
-                        try:
-                            st.image(selected['image_path'], 
-                                   caption="Original Eye Image",
-                                   use_column_width=True)
-                        except:
-                            st.warning("⚠️ Could not load original image")
-                    
-                    st.markdown("#### Clinical Notes")
-                    st.write(selected['notes'] if selected['notes'] else "No notes available")
-                    
-                    # Action buttons
-                    st.markdown("#### Actions")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        if st.button("🔄 Update Detection", key="update_detection_btn"):
-                            # Implement update logic here
-                            pass
-                    
-                    with col2:
-                        if st.button("🗑️ Delete Detection", type="secondary", key="delete_detection_btn"):
-                            if delete_detection(selected['id']):
-                                st.success("✅ Detection deleted successfully!")
+                        
+                        if detection.get('image_path'):
+                            try:
+                                st.image(detection['image_path'], use_column_width=True)
+                            except:
+                                st.warning("Couldn't load image")
+                        
+                        st.markdown("**Notes:**")
+                        st.write(detection['notes'] or "No notes available")
+                        
+                        # Delete button
+                        if st.button("Delete Detection", type="secondary"):
+                            if delete_detection(detection['id']):
                                 st.rerun()
-        
         except Exception as e:
-            st.error(f"❌ Failed to load detections: {str(e)}")
+            st.error(f"Failed to load history: {str(e)}")
                     
 # -------------------------------
 # 📅 Appointments Page 
