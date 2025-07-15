@@ -3967,37 +3967,29 @@ def _delete_user(user_id):
 # -------------------------------
 # 🤖 Model Management Functions
 # -------------------------------
-def is_valid_keras_file(filepath, is_h5=False):
-    """Check if file has valid Keras signature"""
+def is_valid_keras_file(filepath):
+    """Check if file has valid Keras signature for both .h5 and .keras formats"""
     try:
-        if is_h5:
-            with h5py.File(filepath, 'r') as f:
-                return 'model_config' in f.attrs
-        else:
-            return tf.saved_model.contains_saved_model(str(filepath))
-    except:
+        with h5py.File(filepath, 'r') as f:
+            # Check for standard Keras attributes
+            return 'model_config' in f.attrs or 'keras_version' in f.attrs
+    except (OSError, ImportError) as e:
         return False
 
 def _handle_model_upload(new_model, version, description, release_notes):
-    """Handle the upload and validation of new model versions with comprehensive checks"""
-    conn = None
+    """Handle model upload with comprehensive validation"""
     try:
         # Validate inputs
         if not all([new_model, version]):
             raise ValueError("Model file and version are required")
         
         # Check file extension
-        valid_extensions = ('.h5', '.keras')
-        if not new_model.name.lower().endswith(valid_extensions):
-            raise ValueError(f"Only {', '.join(valid_extensions)} files are accepted")
+        if not new_model.name.lower().endswith(('.h5', '.keras')):
+            raise ValueError("Only .h5 or .keras files are accepted")
         
         # Check file size
-        MIN_MODEL_SIZE = 1024  # 1KB
-        MAX_MODEL_SIZE = 500 * 1024 * 1024  # 500MB
-        if new_model.size < MIN_MODEL_SIZE:
-            raise ValueError("Uploaded file is too small to be a valid model")
-        if new_model.size > MAX_MODEL_SIZE:
-            raise ValueError(f"Model file too large (max {MAX_MODEL_SIZE/1024/1024}MB allowed)")
+        if new_model.size < 1024:  # 1KB minimum
+            raise ValueError("File is too small to be a valid model")
         
         # Validate version format
         if not re.match(r'^\d+\.\d+\.\d+$', version):
@@ -4007,323 +3999,251 @@ def _handle_model_upload(new_model, version, description, release_notes):
         models_dir = REPO_ROOT / MODELS_DIR
         models_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate unique filename
+        # Generate unique filename preserving original extension
+        file_ext = Path(new_model.name).suffix.lower()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_ext = '.h5' if new_model.name.lower().endswith('.h5') else '.keras'
         model_filename = f"model_v{version}_{timestamp}{file_ext}"
         model_path = models_dir / model_filename
         
-        # First save the file completely
-        with open(model_path, "wb") as f:
-            f.write(new_model.getbuffer())
-        
+        # Save to temp file for validation
+        temp_path = models_dir / f"temp_{model_filename}"
         try:
-            # Verify file signature
-            is_h5 = file_ext == '.h5'
-            if not is_valid_keras_file(model_path, is_h5):
-                raise ValueError(f"Invalid {'HDF5' if is_h5 else 'SavedModel'} format")
+            with open(temp_path, "wb") as f:
+                f.write(new_model.getbuffer())
+            
+            # Verify file signature before loading
+            if not is_valid_keras_file(temp_path):
+                raise ValueError("Uploaded file is not a valid Keras model (missing signature)")
             
             # Load and validate model
-            model = tf.keras.models.load_model(model_path)
-            
-            # Verify model compatibility
-            if model.input_shape[1:3] != MODEL_INPUT_SIZE:
-                raise ValueError(f"Model expects input size {model.input_shape[1:3]} but system requires {MODEL_INPUT_SIZE}")
+            try:
+                model = load_model(temp_path)
                 
-            if model.output_shape[1] != len(CLASS_NAMES):
-                raise ValueError(f"Model has {model.output_shape[1]} output classes but system expects {len(CLASS_NAMES)}")
+                # Verify model compatibility
+                if model.input_shape[1:3] != MODEL_INPUT_SIZE:
+                    raise ValueError(
+                        f"Model expects input size {model.input_shape[1:3]} "
+                        f"but system requires {MODEL_INPUT_SIZE}"
+                    )
+                    
+                if model.output_shape[1] != len(CLASS_NAMES):
+                    raise ValueError(
+                        f"Model has {model.output_shape[1]} output classes "
+                        f"but system expects {len(CLASS_NAMES)}"
+                    )
+                
+                # Move to final location
+                os.rename(temp_path, model_path)
+                
+            except Exception as e:
+                raise ValueError(f"Model loading failed: {str(e)}")
             
-            # Get model metrics
-            model_metrics = {
-                "input_shape": model.input_shape,
-                "output_shape": model.output_shape,
-                "num_layers": len(model.layers),
-                "trainable_params": model.count_params(),
-                "compatible": True,
-                "upload_timestamp": timestamp,
-                "file_format": "HDF5" if is_h5 else "SavedModel",
-                "tensorflow_version": getattr(model, 'tensorflow_version', 'unknown')
-            }
-            
-            # Save model metadata to database
-            conn = sqlite3.connect(DB_NAME)
+        except Exception as e:
+            if temp_path.exists():
+                os.remove(temp_path)
+            raise e
+        
+        # Save model metadata to database
+        with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO model_versions 
-                (version, description, release_notes, path, uploaded_by, performance_metrics)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (version, description, release_notes, path, uploaded_by)
+                VALUES (?, ?, ?, ?, ?)
             ''', (
                 version,
                 description,
                 release_notes,
                 str(model_path.relative_to(REPO_ROOT)),
-                st.session_state.user_id,
-                json.dumps(model_metrics)
+                st.session_state.user_id
             ))
             conn.commit()
-            
-            st.success(f"✅ Model version {version} uploaded and validated successfully!")
-            return True
-            
-        except Exception as e:
-            # Clean up the file if validation fails
-            if model_path.exists():
-                os.remove(model_path)
-            raise e
-            
+        
+        return True
+        
     except sqlite3.IntegrityError:
         st.error("❌ A model with this version already exists")
     except ValueError as e:
         st.error(f"❌ Validation error: {str(e)}")
     except Exception as e:
-        st.error(f"❌ Error handling model upload: {str(e)}")
-    finally:
-        if conn:
-            conn.close()
-            # Clean up if file was created but DB operation failed
-            if 'model_path' in locals() and model_path.exists() and not conn:
-                os.remove(model_path)
-    
+        st.error(f"❌ Upload failed: {str(e)}")
+        if 'temp_path' in locals() and temp_path.exists():
+            os.remove(temp_path)
     return False
 
-def delete_model_version(model_id):
-    """Permanently delete a model version from system with proper checks"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # First check if this is the active model
-            cursor.execute('''
-                SELECT path FROM model_versions WHERE id = ?
-            ''', (model_id,))
-            model_path = cursor.fetchone()
-            
-            if not model_path:
-                st.error("❌ Model not found")
-                return False
-                
-            model_path = model_path[0]
-            abs_path = REPO_ROOT / model_path
-            
-            # Check if this is the active model
-            cursor.execute('''
-                SELECT value FROM system_settings WHERE key = 'active_model'
-            ''')
-            active_path = cursor.fetchone()
-            
-            if active_path and active_path[0] == model_path:
-                st.error("❌ Cannot delete the active model. Set another model as active first.")
-                return False
-            
-            # Delete the database record first
-            cursor.execute('DELETE FROM model_versions WHERE id = ?', (model_id,))
-            conn.commit()
-            
-            # Then delete the file if it exists
-            if abs_path.exists():
-                try:
-                    os.remove(abs_path)
-                    st.success("✅ Model version deleted successfully")
-                    return True
-                except Exception as e:
-                    conn.rollback()
-                    st.error(f"❌ Failed to delete model file: {str(e)}")
-                    return False
-            
-            return True
-            
-    except Exception as e:
-        st.error(f"❌ Failed to delete model: {str(e)}")
-        return False
-
-def _set_active_model(model_id):
-    """Set a model version as the active model with proper validation"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # Get the model details
-            cursor.execute('''
-                SELECT path, performance_metrics FROM model_versions WHERE id = ?
-            ''', (model_id,))
-            model_info = cursor.fetchone()
-            
-            if not model_info:
-                st.error("❌ Model not found")
-                return False
-                
-            model_path, metrics_json = model_info
-            abs_path = REPO_ROOT / model_path
-            
-            # Verify model file exists
-            if not abs_path.exists():
-                st.error("❌ Model file not found")
-                return False
-                
-            # Verify model is compatible
-            try:
-                metrics = json.loads(metrics_json) if metrics_json else {}
-                if not metrics.get('compatible', False):
-                    st.error("❌ Model is marked as incompatible")
-                    return False
-            except:
-                st.error("❌ Invalid model metrics")
-                return False
-            
-            # Update system settings
-            cursor.execute('''
-                INSERT OR REPLACE INTO system_settings (key, value)
-                VALUES ('active_model', ?)
-            ''', (model_path,))
-            conn.commit()
-            
-            # Clear model cache
-            if 'model' in st.session_state:
-                del st.session_state['model']
-            
-            st.success("✅ Model set as active successfully!")
-            return True
-            
-    except Exception as e:
-        st.error(f"❌ Error setting active model: {str(e)}")
-        return False
-
-def _display_model_management():
-    """Display comprehensive model management interface"""
-    st.markdown('<div class="section-title">Model Management</div>', unsafe_allow_html=True)
+def model_management():
+    """Streamlit interface for managing uploaded AI models"""
+    st.markdown("""
+    <style>
+    .model-requirements {
+        background-color: #f8f9fa;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
-    # Current active model display
-    current_model = get_active_model_info()
-    if current_model:
-        st.markdown(f"""
-        <div class="model-card">
-            <h3>Active Model</h3>
-            <p><strong>Version:</strong> {current_model.get('version', 'N/A')}</p>
-            <p><strong>Description:</strong> {current_model.get('description', 'N/A')}</p>
-            <p><strong>Uploaded by:</strong> {current_model.get('uploaded_by', 'N/A')}</p>
-            <p><strong>Upload date:</strong> {current_model.get('uploaded_at', 'N/A')}</p>
-            <p><strong>Path:</strong> {current_model.get('path', 'N/A')}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🧠 AI Model Management Panel</div>', unsafe_allow_html=True)
+
+    # Model requirements info box
+    st.markdown("""
+    <div class="model-requirements">
+    <h4>⚠️ Model Requirements</h4>
+    <ul>
+        <li>Must be a Keras .h5 or .keras file</li>
+        <li>Input shape must match: {MODEL_INPUT_SIZE}</li>
+        <li>Output classes must match: {len(CLASS_NAMES)}</li>
+        <li>Version must follow semantic versioning (1.0.0)</li>
+    </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ----------------------------
+    # 🔍 Show current active model
+    # ----------------------------
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM system_settings WHERE key = 'active_model'")
+    row = cursor.fetchone()
+    active_path = row[1] if row else ""
+
+    if active_path:
+        cursor.execute("SELECT * FROM model_versions WHERE path = ?", (active_path,))
+        model_row = cursor.fetchone()
+        if model_row:
+            st.success(f"✅ **Active Model:** {model_row[1]} (uploaded {model_row[5]})")
+            st.code(f"Path: {model_row[4]}")
+        else:
+            st.warning("⚠️ Active model path is set but no matching model in database")
     else:
-        st.warning("⚠️ No active model configured - detections will not work")
+        st.warning("⚠️ No active model set. Detection functionality will not work.")
 
-    # Model upload form with improved guidance
-    with st.expander("📤 Upload New Model Version", expanded=False):
-        st.info("""
-        ℹ️ Model file requirements:
-        - Must be a Keras .h5 (HDF5) or .keras (SavedModel) file
-        - Should be exported with the same TensorFlow version as the server
-        - Must match the expected input/output dimensions
-        - Maximum file size: 500MB
-        """)
-        
-        with st.form("model_upload_form", clear_on_submit=True):
-            new_model = st.file_uploader(
-                "Model file (.h5 or .keras)", 
-                type=["h5", "keras"],
-                accept_multiple_files=False,
-                help="Upload a trained TensorFlow/Keras model file"
+    # ----------------------------
+    # 📤 Upload new model section
+    # ----------------------------
+    with st.expander("📥 Upload New AI Model", expanded=True):
+        with st.form("upload_form", clear_on_submit=True):
+            model_file = st.file_uploader(
+                "Upload model (.h5 or .keras)", 
+                type=['h5', 'keras'],
+                help="Must be a trained Keras model with proper architecture"
             )
-            
             version = st.text_input(
-                "Version* (e.g., 1.0.0)",
-                help="Follow semantic versioning (major.minor.patch)"
+                "Model Version (e.g., 1.0.0)",
+                help="Follow semantic versioning format"
             )
-            
-            description = st.text_area(
-                "Description",
-                help="Brief description of this model version"
-            )
-            
-            release_notes = st.text_area(
-                "Release Notes", 
-                help="What's new or changed in this version"
-            )
-            
-            if st.form_submit_button("🚀 Upload Model", type="primary"):
-                if new_model and version:
-                    with st.spinner("Validating and uploading model..."):
-                        if _handle_model_upload(new_model, version, description, release_notes):
-                            st.rerun()
-                else:
-                    st.warning("Please provide both model file and version number")
+            description = st.text_area("Description")
+            release_notes = st.text_area("Release Notes")
 
-    # Model version history
-    st.markdown('<div class="section-title">Model Versions</div>', unsafe_allow_html=True)
-    
+            submit = st.form_submit_button("🚀 Upload & Validate")
+
+            if submit:
+                if not st.session_state.get("user_id"):
+                    st.error("🔒 Login required to upload models")
+                elif not model_file or not version:
+                    st.warning("⚠️ Model file and version are required")
+                else:
+                    with st.spinner("🔍 Validating model..."):
+                        success = _handle_model_upload(
+                            new_model=model_file,
+                            version=version,
+                            description=description,
+                            release_notes=release_notes
+                        )
+                        if success:
+                            st.success("🎉 Model uploaded successfully!")
+                            st.balloons()
+                            st.experimental_rerun()
+
+    # ----------------------------
+    # 📊 Model version table
+    # ----------------------------
+    st.markdown("### 📚 Model Version History")
+
     try:
-        models = _get_model_history()
-        
-        if not models.empty:
-            # Configure grid
-            gb = GridOptionsBuilder.from_dataframe(models[['version', 'description', 'uploaded_at', 'uploaded_by', 'is_active']])
+        df = _get_model_history()
+        if df.empty:
+            st.info("No models uploaded yet. Use the upload form above to add your first model.")
+        else:
+            gb = GridOptionsBuilder.from_dataframe(df)
             gb.configure_default_column(
-                filterable=True,
-                sortable=True,
-                resizable=True,
+                filterable=True, 
+                sortable=True, 
+                resizable=True, 
                 wrapText=True,
                 autoHeight=True
             )
             
+            # Configure columns
             gb.configure_column("version", header_name="Version", width=120)
             gb.configure_column("description", header_name="Description", width=200)
             gb.configure_column("uploaded_at", header_name="Upload Date", width=150)
             gb.configure_column("uploaded_by", header_name="Uploaded By", width=150)
-            gb.configure_column("is_active", header_name="Active", width=80)
+            gb.configure_column("is_active", header_name="Active", width=80, pinned='right')
             
             gb.configure_selection(
-                'single',
+                'single', 
                 use_checkbox=True,
-                pre_selected_rows=[],
                 header_checkbox=False
             )
             
             grid_options = gb.build()
-            
-            # Display the grid
-            grid_response = AgGrid(
-                models,
+
+            grid = AgGrid(
+                df,
                 gridOptions=grid_options,
+                update_mode=GridUpdateMode.SELECTION_CHANGED,
                 height=400,
                 width='100%',
                 theme='streamlit',
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                fit_columns_on_grid_load=True,
-                key='models_grid'
+                key="model_versions_grid",
+                fit_columns_on_grid_load=True
             )
-            
-            # Get selected model
-            selected_rows = grid_response['selected_rows']
-            selected_model = None
-            
-            if selected_rows:
-                selected_model = selected_rows[0] if isinstance(selected_rows, list) else selected_rows.iloc[0].to_dict()
-            
-            # Show actions only if a row is selected
-            if selected_model:
-                st.markdown("### Selected Model Actions")
-                col1, col2 = st.columns(2)
+
+            selected = grid["selected_rows"]
+            if selected:
+                selected_model = selected[0]
+                model_id = selected_model['id']
+                is_active = selected_model['is_active'] == '✅'
+
+                st.markdown("---")
+                st.subheader("⚙️ Model Actions")
+                
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    if st.button("🗑️ Delete Version", type="secondary", 
-                               help="Permanently delete this model version"):
-                        if _confirm_delete_model(selected_model['id']):
-                            if delete_model_version(selected_model['id']):
+                    if st.button("🗑️ Delete Model", 
+                               help="Permanently delete this model version",
+                               type="secondary"):
+                        if not is_active:
+                            if delete_model_version(model_id):
+                                st.success("Model deleted successfully")
                                 st.experimental_rerun()
+                        else:
+                            st.error("Cannot delete active model")
                 
                 with col2:
-                    is_active = selected_model.get('is_active', '') == '✅'
+                    if st.button("📋 View Details",
+                                help="Show detailed model information"):
+                        with st.expander("Model Details"):
+                            st.json(selected_model)
+                
+                with col3:
                     if st.button("⭐ Set as Active", 
                                disabled=is_active,
-                               help="Set this model as the active detection model"):
-                        if _set_active_model(selected_model['id']):
+                               help="Make this the active detection model",
+                               type="primary"):
+                        if _set_active_model(model_id):
+                            st.success("Model set as active")
                             st.experimental_rerun()
-        else:
-            st.info("No model versions found in the system")
-            
+
     except Exception as e:
-        st.error(f"❌ Error loading model history: {str(e)}")
+        st.error(f"❌ Error loading model versions: {str(e)}")
+        st.exception(e)
+
+    finally:
+        conn.close()
         
 # -------------------------------
 # ⚙️ System Settings Functions
