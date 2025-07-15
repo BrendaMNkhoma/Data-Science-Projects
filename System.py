@@ -655,64 +655,63 @@ def get_patient_by_id(patient_id):
         conn.close()
 
 # -------------------------------
-# 👁️ Detection Functions 
+# 👁️ Detection Functions
 # -------------------------------
 @st.cache_resource
 def load_detection_model():
-    """Load and validate the active cataract detection model with enhanced error handling"""
-    model_info = get_active_model_info()
-    
-    if not model_info:
-        st.error("❌ No model information found in system settings")
-        return None
-    
-    if 'path' not in model_info or not model_info['path']:
-        st.error("❌ No active model path configured")
-        return None
-    
+    """Load and validate the active cataract detection model"""
     try:
-        # Resolve the model path (handle both relative and absolute paths)
-        model_path = Path(model_info['path'])
+        # Get active model path
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM system_settings WHERE key = 'active_model'")
+            result = cursor.fetchone()
+            
+            if not result or not result[0]:
+                st.error("❌ No active model configured in system settings")
+                return None
+                
+            model_path = result[0]
+        
+        # Resolve path (handle both relative and absolute paths)
+        model_path = Path(model_path)
         if not model_path.is_absolute():
             model_path = REPO_ROOT / model_path
         
-        st.info(f"🔍 Attempting to load model from: {model_path}")
-        
-        # Verify the model file exists
+        # Verify model exists
         if not model_path.exists():
             st.error(f"❌ Model file not found at: {model_path}")
-            # Try to find the model in alternative locations
-            alt_path = REPO_ROOT / "models" / Path(model_info['path']).name
+            # Try alternative locations
+            alt_path = REPO_ROOT / "models" / model_path.name
             if alt_path.exists():
                 st.warning(f"⚠️ Found model at alternative location: {alt_path}")
                 model_path = alt_path
             else:
                 return None
         
-        # Quick validation of the model file before loading
+        # Quick validation before loading
         try:
             with h5py.File(model_path, 'r') as f:
                 if 'model_weights' not in f and 'model_config' not in f:
-                    st.error("❌ Invalid model file format (missing required components)")
+                    st.error("❌ Invalid model file format")
                     return None
         except Exception as e:
-            st.error(f"❌ Model file validation failed: {str(e)}")
+            st.error(f"❌ Model validation failed: {str(e)}")
             return None
         
-        # Load the TensorFlow model with progress indicator
-        with st.spinner(f"⚙️ Loading model v{model_info.get('version', 'unknown')}..."):
+        # Load the model with progress indicator
+        with st.spinner(f"⚙️ Loading model from {model_path.name}..."):
             try:
                 model = load_model(model_path)
             except Exception as e:
-                st.error(f"❌ Model loading failed: {str(e)}")
+                st.error(f"❌ Failed to load model: {str(e)}")
                 return None
         
-        # Verify the model has the expected structure
+        # Validate model structure
         if not hasattr(model, 'predict'):
             st.error("❌ Invalid model format - missing predict method")
             return None
             
-        # Verify output shape matches expected classes
         if model.output_shape[1] != len(CLASS_NAMES):
             st.error(f"""❌ Model output mismatch: 
                    Expected {len(CLASS_NAMES)} classes ({CLASS_NAMES}) 
@@ -720,15 +719,16 @@ def load_detection_model():
             return None
         
         # Run a quick test prediction
-        test_result, test_msg = test_model(model)
-        if not test_result:
-            st.error(f"❌ Model test failed: {test_msg}")
+        test_input = np.zeros((1, *MODEL_INPUT_SIZE, 3))
+        try:
+            prediction = model.predict(test_input, verbose=0)
+            if np.any(np.isnan(prediction)):
+                st.error("❌ Model produced NaN values")
+                return None
+        except Exception as e:
+            st.error(f"❌ Model test failed: {str(e)}")
             return None
             
-        st.success(f"""✅ Model loaded successfully!
-                   \nVersion: {model_info.get('version', 'unknown')}
-                   \nUploaded: {model_info.get('uploaded_at', 'unknown')}
-                   \nBy: {model_info.get('uploaded_by', 'unknown')}""")
         return model
         
     except Exception as e:
@@ -2442,42 +2442,59 @@ def show_home_page():
 # 👁️ Detection Page 
 # -------------------------------
 def show_detection_page():
-    """Show the detection interface with robust selection handling"""
+    """Show the detection interface with robust model handling"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
 
-    # Initialize session state for detection results
+    # Initialize session state
     if 'detection_results' not in st.session_state:
         st.session_state.detection_results = None
     if 'selected_patient' not in st.session_state:
         st.session_state.selected_patient = None
 
-    # Display current model info
+    # --- Model Status Section ---
     model_info = get_active_model_info()
-    with st.expander("ℹ️ Current Model Information", expanded=True):
-        if model_info:
-            st.markdown(f"""
-            - **Version:** {model_info.get('version', 'N/A')}
-            - **Description:** {model_info.get('description', 'N/A')}
-            - **Uploaded by:** {model_info.get('uploaded_by', 'N/A')}
+    with st.expander("🔍 Model Status Check", expanded=True):
+        if not model_info:
+            st.error("""
+            ❌ No active model configured!
+            Please go to Admin Panel → Model Management to:
+            1. Upload a cataract detection model
+            2. Set it as active
             """)
-        else:
-            st.warning("No active model configured")
+            return  # Don't proceed if no active model
+        
+        # Display model info with test button
+        col1, col2 = st.columns([3,1])
+        with col1:
+            st.success(f"""
+            ✅ **Active Model:** {model_info.get('version', 'Unknown')}
+            - **Uploaded:** {model_info.get('uploaded_at', 'N/A')}
+            - **By:** {model_info.get('uploaded_by', 'N/A')}
+            - **Path:** {model_info.get('path', 'N/A')}
+            """)
+        
+        with col2:
+            if st.button("Test Model", help="Verify the model loads correctly"):
+                with st.spinner("Loading model..."):
+                    model = load_detection_model()
+                    if model:
+                        st.success("✅ Model loaded successfully!")
+                    else:
+                        st.error("❌ Failed to load model - check model file")
 
     # Main tabs
     tab1, tab2 = st.tabs(["New Detection", "Manage Detections"])
 
-    # TAB 1: New Detection
+    # --- TAB 1: New Detection ---
     with tab1:
         use_camera = st.checkbox("🎥 Use Camera", value=False, key="use_camera")
 
         # Patient Selection Section
         st.markdown('<div class="section-title">Patient Information</div>', unsafe_allow_html=True)
         
-        # Using columns for better layout
         col1, col2 = st.columns(2)
         
-        with col1:
-            # Existing Patient Selection
+        with col1:  # Existing Patient Selection
             with st.container():
                 st.markdown("#### Select Existing Patient")
                 patients = get_patients()
@@ -2497,13 +2514,12 @@ def show_detection_page():
                     if selected_index is not None:
                         st.session_state.selected_patient = patients.iloc[selected_index].to_dict()
 
-        with col2:
-            # New Patient Registration
+        with col2:  # New Patient Registration
             with st.container():
                 st.markdown("#### Register New Patient")
                 with st.form("patient_form", clear_on_submit=True):
                     full_name = st.text_input("Full Name*")
-                    age = st.number_input("Age*", min_value=0, max_value=120, value=30)
+                    age = st.number_input("Age*", 1, 120)
                     gender = st.selectbox("Gender*", ["Male", "Female", "Other"])
                     village = st.text_input("Village*")
                     district = st.text_input("District*")
@@ -2517,17 +2533,15 @@ def show_detection_page():
                                 gender=gender,
                                 age=age,
                                 village=village,
-                                district=district,
-                                traditional_authority="",
-                                marital_status=""
+                                district=district
                             )
                             if patient_id:
                                 st.session_state.selected_patient = get_patient_by_id(patient_id)
-                                st.success("Patient registered successfully!")
+                                st.success("Patient registered!")
                                 st.rerun()
 
-        # Only show detection interface if patient is selected
-        if st.session_state.selected_patient:
+        # Detection Interface (only if patient selected and model available)
+        if st.session_state.selected_patient and model_info:
             patient = st.session_state.selected_patient
             st.markdown('<div class="section-title">Patient Details</div>', unsafe_allow_html=True)
             st.markdown(f"""
@@ -2546,7 +2560,6 @@ def show_detection_page():
                 img = st.file_uploader(
                     "Upload eye image", 
                     type=["jpg", "jpeg", "png"],
-                    accept_multiple_files=False,
                     key="file_upload"
                 )
 
@@ -2558,10 +2571,13 @@ def show_detection_page():
                 if st.button("Analyze Image", key="analyze_btn", type="primary"):
                     with st.spinner("Analyzing..."):
                         try:
-                            # Create temp file
+                            # Create temp directory if needed
                             temp_dir = "temp_images"
                             os.makedirs(temp_dir, exist_ok=True)
-                            temp_file = os.path.join(temp_dir, f"eye_{patient['id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg")
+                            
+                            # Generate unique filename
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            temp_file = os.path.join(temp_dir, f"eye_{patient['id']}_{timestamp}.jpg")
                             
                             # Save image
                             with open(temp_file, "wb") as f:
@@ -2582,7 +2598,7 @@ def show_detection_page():
                                     st.rerun()
                         except Exception as e:
                             st.error(f"Analysis failed: {str(e)}")
-                            if os.path.exists(temp_file):
+                            if 'temp_file' in locals() and os.path.exists(temp_file):
                                 os.remove(temp_file)
 
             # Show results if available
@@ -2639,8 +2655,7 @@ def show_detection_page():
                         else:
                             st.error("Failed to save detection")
 
-
-    # TAB 2: Manage Detections
+    # --- TAB 2: Manage Detections ---
     with tab2:
         st.markdown('<div class="section-title">Manage Detection Results</div>', unsafe_allow_html=True)
         
@@ -2658,15 +2673,13 @@ def show_detection_page():
             with col3:
                 min_confidence = st.slider(
                     "Minimum confidence", 
-                    min_value=0, 
-                    max_value=100, 
-                    value=70
+                    0, 100, 70
                 )
 
-        # Get filtered detections
+        # Get and filter detections
         detections = get_detections()
         
-        if detections is not None and not detections.empty:
+        if not detections.empty:
             # Apply filters
             if date_filter:
                 detections = detections[pd.to_datetime(detections['detection_date']).dt.date == date_filter]
@@ -2677,121 +2690,91 @@ def show_detection_page():
             # Configure interactive grid
             gb = GridOptionsBuilder.from_dataframe(detections)
             gb.configure_default_column(
-                editable=False,
+                editable=True,
                 filterable=True,
-                sortable=True,
-                resizable=True
+                sortable=True
             )
-            
-            # Configure columns
-            gb.configure_column("result", editable=True, header_name="Result")
-            gb.configure_column("confidence", 
-                              editable=True, 
-                              header_name="Confidence", 
-                              type=["numericColumn", "numberColumnFilter"])
-            gb.configure_column("notes", editable=True, header_name="Notes")
-            
-            # Configure selection
-            gb.configure_selection(
-                selection_mode="multiple",
-                use_checkbox=True,
-                groupSelectsChildren=True
-            )
-            
+            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
             grid_options = gb.build()
 
-            # Display the grid
+            # Display grid
             grid_response = AgGrid(
                 detections,
                 gridOptions=grid_options,
                 height=500,
                 width='100%',
-                data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-                update_mode=GridUpdateMode.MODEL_CHANGED,
                 theme='streamlit',
                 key='detections_grid'
             )
 
-            # Handle selection safely
-            selected_rows = grid_response.get('selected_rows', [])
-            
-            # Check if we have exactly one row selected
-            if isinstance(selected_rows, (list, pd.DataFrame)) and len(selected_rows) == 1:
-                selected = selected_rows[0] if isinstance(selected_rows, list) else selected_rows.iloc[0].to_dict()
-                
+            # Handle selected rows
+            selected_rows = grid_response['selected_rows']
+            if selected_rows:
                 st.markdown("---")
-                st.markdown(f"### Detailed View: Detection #{selected['id']}")
+                st.markdown(f"### Selected Detection(s)")
                 
-                col1, col2 = st.columns(2)
+                # Show detailed view for single selection
+                if len(selected_rows) == 1:
+                    selected = selected_rows[0]
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("#### Patient Info")
+                        st.markdown(f"""
+                        - **Name:** {selected['full_name']}
+                        - **Age:** {selected['age']}
+                        - **Location:** {selected['village']}
+                        """)
+                    
+                    with col2:
+                        st.markdown("#### Detection Details")
+                        result_color = {
+                            'normal': 'green',
+                            'mild': 'orange',
+                            'severe': 'red',
+                            'conjunctival_growth': 'purple'
+                        }.get(selected['result'], 'blue')
+                        st.markdown(f"""
+                        - **Result:** <span style='color:{result_color}'>
+                            {selected['result'].title()}
+                        </span>
+                        - **Confidence:** {selected['confidence']:.2f}%
+                        - **Date:** {selected['detection_date']}
+                        """, unsafe_allow_html=True)
+                
+                # Action buttons
+                st.markdown("### Actions")
+                col1, col2, col3 = st.columns(3)
+                
                 with col1:
-                    st.markdown("#### Patient Information")
-                    st.markdown(f"""
-                    - **Name:** {selected['full_name']}
-                    - **Age:** {selected['age']}
-                    - **Gender:** {selected['gender']}
-                    - **Location:** {selected['village']}, {selected['district']}
-                    """)
+                    if st.button("💾 Save Changes", key="save_changes"):
+                        updated = grid_response['data']
+                        success = 0
+                        for _, row in updated.iterrows():
+                            if update_detection(
+                                row['id'],
+                                row['result'],
+                                row['confidence'],
+                                row['notes']
+                            ):
+                                success += 1
+                        st.success(f"Updated {success} records")
+                        st.rerun()
                 
                 with col2:
-                    st.markdown("#### Detection Details")
-                    result_color = {
-                        'normal': 'green',
-                        'mild': 'orange',
-                        'severe': 'red',
-                        'conjunctival_growth': 'purple'
-                    }.get(selected['result'], 'blue')
-                    st.markdown(f"""
-                    - **Result:** <span style='color:{result_color}; font-weight:bold'>
-                        {selected['result'].replace('_', ' ').title()}
-                    </span>
-                    - **Confidence:** {selected['confidence']:.2f}%
-                    - **Date:** {selected['detection_date']}
-                    - **Attended by:** {selected['attended_by']}
-                    """, unsafe_allow_html=True)
+                    if st.button("🔄 Refresh", key="refresh_data"):
+                        st.rerun()
                 
-                st.markdown("#### Clinical Notes")
-                st.write(selected['notes'] if selected.get('notes') else "No notes available")
-
-            # Action buttons
-            st.markdown("### Selected Actions")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("💾 Save Changes", key="save_changes_btn"):
-                    updated_data = grid_response['data']
-                    success_count = 0
-                    
-                    for _, row in updated_data.iterrows():
-                        if update_detection(
-                            row['id'],
-                            row['result'],
-                            row['confidence'],
-                            row['notes']
-                        ):
-                            success_count += 1
-                    
-                    st.success(f"Updated {success_count} records")
-                    st.rerun()
-            
-            with col2:
-                if st.button("🔄 Refresh Data", key="refresh_data_btn"):
-                    st.rerun()
-            
-            with col3:
-                if len(selected_rows) > 0 and st.button(
-                    "🗑️ Delete Selected",
-                    key="delete_selected_btn",
-                    type="primary"
-                ):
-                    delete_count = 0
-                    for row in selected_rows:
-                        if delete_detection(row['id']):
-                            delete_count += 1
-                    
-                    st.success(f"Deleted {delete_count} records")
-                    st.rerun()
+                with col3:
+                    if st.button("🗑️ Delete", type="primary", key="delete_selected"):
+                        deleted = 0
+                        for row in selected_rows:
+                            if delete_detection(row['id']):
+                                deleted += 1
+                        st.success(f"Deleted {deleted} records")
+                        st.rerun()
         else:
             st.info("No detections found matching filters")
+            
 # -------------------------------
 # 📅 Appointments Page 
 # -------------------------------
@@ -4105,17 +4088,16 @@ def _delete_user(user_id):
 # 🤖 Model Management Functions
 # -------------------------------
 def _handle_model_upload(new_model, version, description, release_notes):
-    """Simplified model upload handler without validation"""
+    """Handles model upload with comprehensive validation"""
     try:
-        # Basic input checks
+        # Validate inputs
         if not all([new_model, version]):
             raise ValueError("Model file and version are required")
         
-        # Check file extension only
         if not new_model.name.lower().endswith(('.h5', '.keras')):
-            raise ValueError("Only .h5 or .keras files are accepted")
+            raise ValueError("Only .h5 or .keras files accepted")
         
-        # Create models directory
+        # Create models directory if it doesn't exist
         models_dir = REPO_ROOT / MODELS_DIR
         models_dir.mkdir(parents=True, exist_ok=True)
         
@@ -4125,10 +4107,14 @@ def _handle_model_upload(new_model, version, description, release_notes):
         model_filename = f"model_v{version}_{timestamp}{file_ext}"
         model_path = models_dir / model_filename
         
-        # Save file directly
+        # Save file
         with open(model_path, "wb") as f:
             f.write(new_model.getbuffer())
         
+        # Verify the saved file
+        if not model_path.exists():
+            raise ValueError("Failed to save model file")
+            
         # Save to database
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -4145,6 +4131,17 @@ def _handle_model_upload(new_model, version, description, release_notes):
             ))
             conn.commit()
         
+        # Set as active if first model
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM model_versions")
+            if cursor.fetchone()[0] == 1:  # First model
+                cursor.execute('''
+                    INSERT OR REPLACE INTO system_settings (key, value)
+                    VALUES ('active_model', ?)
+                ''', (str(model_path.relative_to(REPO_ROOT)),))
+                conn.commit()
+        
         return True
     
     except sqlite3.IntegrityError:
@@ -4152,61 +4149,48 @@ def _handle_model_upload(new_model, version, description, release_notes):
     except Exception as e:
         st.error(f"❌ Upload failed: {str(e)}")
         if 'model_path' in locals() and model_path.exists():
-            os.remove(model_path)
-    
+            try:
+                os.remove(model_path)
+            except:
+                pass
     return False
 
 def _display_model_management():
-    """Simplified model management interface"""
+    """Display model management interface with activation controls"""
     st.markdown("## 🤖 Model Management")
     
-    # Current active model - fixed NoneType error
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM system_settings WHERE key = 'active_model'")
-            active_path_result = cursor.fetchone()
-            active_path = active_path_result[0] if active_path_result else None
-            
-            if active_path:
-                cursor.execute('''
-                    SELECT mv.version, mv.description, mv.uploaded_at, u.full_name 
-                    FROM model_versions mv
-                    JOIN users u ON mv.uploaded_by = u.id
-                    WHERE mv.path = ?
-                ''', (active_path,))
-                model_info = cursor.fetchone()
-                
-                if model_info:
-                    version, desc, uploaded_at, uploaded_by = model_info
-                    st.success(f"✅ **Active Model:** {version} (uploaded by {uploaded_by} on {uploaded_at})")
-                else:
-                    st.warning("⚠️ Active model path not found in database")
-            else:
-                st.warning("⚠️ No active model set")
-    except Exception as e:
-        st.error(f"Database error: {str(e)}")
-
+    # Show current active model status
+    active_model = get_active_model_info()
+    if active_model:
+        st.success(f"""
+        ✅ **Active Model:** {active_model['version']}  
+        **Path:** {active_model['path']}  
+        **Uploaded:** {active_model['uploaded_at']} by {active_model['uploaded_by']}
+        """)
+    else:
+        st.error("❌ No active model configured!")
+    
     # Upload form
     with st.expander("📤 Upload New Model", expanded=True):
         with st.form("upload_form", clear_on_submit=True):
             model_file = st.file_uploader(
                 "Upload model file", 
                 type=['h5', 'keras'],
-                help="Only .h5 or .keras files accepted"
+                help="TensorFlow .h5 or .keras format"
             )
-            version = st.text_input("Version (e.g., 1.0.0)")
-            description = st.text_area("Description (optional)")
+            version = st.text_input("Version* (e.g., 1.0.0)")
+            description = st.text_area("Description")
+            release_notes = st.text_area("Release Notes")
             
-            if st.form_submit_button("Upload", type="primary"):
+            if st.form_submit_button("Upload Model", type="primary"):
                 if model_file and version:
-                    if _handle_model_upload(model_file, version, description, ""):
+                    if _handle_model_upload(model_file, version, description, release_notes):
                         st.success("Model uploaded successfully!")
                         st.experimental_rerun()
                 else:
                     st.warning("Please provide both model file and version")
 
-    # Model list
+    # Model list with activation controls
     st.markdown("### Model Versions")
     try:
         with sqlite3.connect(DB_NAME) as conn:
@@ -4217,9 +4201,10 @@ def _display_model_management():
                     mv.description,
                     datetime(mv.uploaded_at, 'localtime') as uploaded_at,
                     u.full_name as uploaded_by,
+                    mv.path,
                     CASE WHEN mv.path = (
                         SELECT value FROM system_settings WHERE key = 'active_model'
-                    ) THEN '✅' ELSE '' END as is_active
+                    ) THEN '✅ Active' ELSE 'Inactive' END as status
                 FROM model_versions mv
                 JOIN users u ON mv.uploaded_by = u.id
                 ORDER BY mv.uploaded_at DESC
@@ -4228,73 +4213,187 @@ def _display_model_management():
             if not df.empty:
                 gb = GridOptionsBuilder.from_dataframe(df)
                 gb.configure_selection('single')
-                grid = AgGrid(df, gridOptions=gb.build())
+                gb.configure_column('status', hide=True)
+                grid_options = gb.build()
                 
-                if grid['selected_rows']:
-                    selected = grid['selected_rows'][0]
+                grid_response = AgGrid(
+                    df,
+                    gridOptions=grid_options,
+                    height=400,
+                    width='100%',
+                    theme='streamlit',
+                    key='models_grid'
+                )
+                
+                selected_rows = grid_response['selected_rows']
+                if selected_rows:
+                    selected = selected_rows[0]
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        if st.button("Set as Active"):
+                        if st.button("Set as Active Model", 
+                                    disabled=selected['status'] == '✅ Active',
+                                    help="Set this model version as the active model for detections"):
                             if _set_active_model(selected['id']):
                                 st.experimental_rerun()
                     
                     with col2:
-                        if st.button("Delete", disabled=selected['is_active'] == '✅'):
-                            if delete_model_version(selected['id']):
-                                st.experimental_rerun()
+                        if st.button("Delete Model", 
+                                    disabled=selected['status'] == '✅ Active',
+                                    type="secondary",
+                                    help="Permanently delete this model version"):
+                            if _confirm_delete_model(selected['id']):
+                                if delete_model_version(selected['id']):
+                                    st.experimental_rerun()
             else:
                 st.info("No models uploaded yet")
-                
     except Exception as e:
         st.error(f"Error loading models: {str(e)}")
 
-def delete_model_version(model_id):
-    """Delete a model version"""
-    try:
-        with sqlite3.connect(DB_NAME) as conn:
-            cursor = conn.cursor()
-            
-            # Get path before deleting
-            cursor.execute("SELECT path FROM model_versions WHERE id = ?", (model_id,))
-            path = cursor.fetchone()[0]
-            
-            # Delete record
-            cursor.execute("DELETE FROM model_versions WHERE id = ?", (model_id,))
-            conn.commit()
-            
-            # Delete file
-            if path and (REPO_ROOT / path).exists():
-                os.remove(REPO_ROOT / path)
-            
-            st.success("Model deleted")
-            return True
-            
-    except Exception as e:
-        st.error(f"Delete failed: {str(e)}")
-        return False
-
 def _set_active_model(model_id):
-    """Set a model as active"""
+    """Set a model as active with validation"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT path FROM model_versions WHERE id = ?", (model_id,))
-            path = cursor.fetchone()[0]
             
+            # Get model path
+            cursor.execute("SELECT path FROM model_versions WHERE id = ?", (model_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                st.error("Model not found")
+                return False
+                
+            model_path = result[0]
+            
+            # Verify model exists
+            full_path = REPO_ROOT / model_path if not os.path.isabs(model_path) else Path(model_path)
+            if not full_path.exists():
+                st.error(f"Model file not found at: {full_path}")
+                return False
+            
+            # Quick validation
+            try:
+                with h5py.File(full_path, 'r') as f:
+                    if 'model_weights' not in f and 'model_config' not in f:
+                        st.error("Invalid model file format")
+                        return False
+            except Exception as e:
+                st.error(f"Model validation failed: {str(e)}")
+                return False
+            
+            # Update active model
             cursor.execute('''
                 INSERT OR REPLACE INTO system_settings (key, value)
                 VALUES ('active_model', ?)
-            ''', (path,))
+            ''', (model_path,))
             conn.commit()
             
-            st.success("Model set as active")
+            # Clear model cache
+            load_detection_model.clear()
+            
+            st.success("Model activated successfully!")
             return True
             
     except Exception as e:
-        st.error(f"Failed to set active: {str(e)}")
+        st.error(f"Failed to activate model: {str(e)}")
         return False
+
+def delete_model_version(model_id):
+    """Delete a model version with checks"""
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            
+            # Check if this is the active model
+            cursor.execute('''
+                SELECT path FROM model_versions WHERE id = ?
+            ''', (model_id,))
+            model_path = cursor.fetchone()[0]
+            
+            cursor.execute('''
+                SELECT value FROM system_settings WHERE key = 'active_model'
+            ''')
+            active_path = cursor.fetchone()[0]
+            
+            if active_path == model_path:
+                st.error("Cannot delete the active model")
+                return False
+            
+            # Delete the file
+            full_path = REPO_ROOT / model_path if not os.path.isabs(model_path) else Path(model_path)
+            if full_path.exists():
+                os.remove(full_path)
+            
+            # Delete the record
+            cursor.execute('DELETE FROM model_versions WHERE id = ?', (model_id,))
+            conn.commit()
+            
+            st.success("Model deleted successfully")
+            return True
+            
+    except Exception as e:
+        st.error(f"Failed to delete model: {str(e)}")
+        return False
+
+def _confirm_delete_model(model_id):
+    """Show delete confirmation dialog"""
+    with st.expander("⚠️ Confirm Deletion", expanded=True):
+        st.warning("This will permanently delete the model version. This action cannot be undone.")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Confirm Delete", type="primary"):
+                return True
+        with col2:
+            if st.button("Cancel", type="secondary"):
+                return False
+    return False                                                                                                                             
+
+def get_active_model_info():
+    """Get detailed info about the active model"""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
         
+        # Get active model path
+        cursor.execute("SELECT value FROM system_settings WHERE key = 'active_model'")
+        active_path = cursor.fetchone()
+        
+        if not active_path or not active_path[0]:
+            return None
+            
+        # Get model details
+        cursor.execute('''
+            SELECT mv.id, mv.version, mv.description, 
+                   datetime(mv.uploaded_at, 'localtime') as uploaded_at,
+                   u.full_name as uploaded_by,
+                   mv.path
+            FROM model_versions mv
+            JOIN users u ON mv.uploaded_by = u.id
+            WHERE mv.path = ?
+        ''', (active_path[0],))
+        
+        model = cursor.fetchone()
+        if not model:
+            return None
+            
+        return {
+            "id": model[0],
+            "version": model[1],
+            "description": model[2],
+            "uploaded_at": model[3],
+            "uploaded_by": model[4],
+            "path": model[5]
+        }
+        
+    except Exception as e:
+        st.error(f"Error getting active model info: {str(e)}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+            
 # -------------------------------
 # ⚙️ System Settings Functions
 # -------------------------------
@@ -4426,94 +4525,6 @@ def _get_system_info():
             "Session Start": st.session_state.get("session_start", "N/A")
         }
     }
-
-# -------------------------------
-# 🛠️ Helper Functions
-# -------------------------------
-def get_active_model_info():
-    """Get active model info from database"""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT mv.version, mv.description, mv.path, 
-                   datetime(mv.uploaded_at, 'localtime') as uploaded_at,
-                   u.full_name as uploaded_by
-            FROM model_versions mv
-            JOIN users u ON mv.uploaded_by = u.id
-            WHERE mv.path = (SELECT value FROM system_settings WHERE key = 'active_model')
-            ORDER BY mv.uploaded_at DESC
-            LIMIT 1
-        ''')
-        model = cursor.fetchone()
-        
-        if model:
-            return {
-                "version": model[0],
-                "description": model[1],
-                "path": model[2],
-                "upload_date": model[3],
-                "uploaded_by": model[4]
-            }
-        return {}
-    except Exception as e:
-        st.error(f"Error getting active model: {str(e)}")
-        return {}
-    finally:
-        if conn:
-            conn.close()
-
-def _get_model_history():
-    """Get model history from database"""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        models = pd.read_sql_query('''
-            SELECT 
-                mv.id,
-                mv.version, 
-                mv.description,
-                datetime(mv.uploaded_at, 'localtime') as uploaded_at,
-                mv.path,
-                (SELECT full_name FROM users WHERE id = mv.uploaded_by) as uploaded_by,
-                CASE 
-                    WHEN mv.path = (SELECT value FROM system_settings WHERE key = 'active_model') 
-                    THEN '✅' 
-                    ELSE '' 
-                END as is_active
-            FROM model_versions mv
-            ORDER BY mv.uploaded_at DESC
-        ''', conn)
-        
-        if not models.empty:
-            models['full_path'] = models['path'].apply(
-                lambda x: str(REPO_ROOT / x) if x and not os.path.isabs(x) else x
-            )
-            models['exists'] = models['full_path'].apply(
-                lambda x: os.path.exists(x) if x else False
-            )
-        return models
-        
-    except Exception as e:
-        st.error(f"Error loading model history: {str(e)}")
-        return pd.DataFrame()
-    finally:
-        if conn:
-            conn.close()
-
-def _confirm_delete_model(model_id):
-    """Show delete confirmation dialog"""
-    with st.container():
-        st.warning("Permanently delete this model version?")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Confirm Delete", type="primary"):
-                return True
-        with col2:
-            if st.button("Cancel"):
-                return False
-    return False
 
 # -------------------------------
 # 🧭 Main Navigation
