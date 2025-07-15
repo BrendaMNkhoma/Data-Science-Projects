@@ -2424,7 +2424,7 @@ def show_detection_page():
                             img_array = preprocess_image(Image.open(temp_file))
                             predictions = model.predict(img_array)
                             predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
-                            confidence = float(np.max(predictions[0]) * 100
+                            confidence = float(np.max(predictions[0]) * 100)
 
                             st.session_state.detection_results = {
                                 "patient_id": patient['id'],
