@@ -101,7 +101,7 @@ def reject_user(user_id, admin_id):
                 approved_by = ?,
                 approved_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        '''), (admin_id, user_id))
+        ''', (admin_id, user_id))
         conn.commit()
         return True
     except Exception as e:
