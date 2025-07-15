@@ -2470,7 +2470,7 @@ def show_detection_page():
                         
                         if st.button("Delete Detection", type="secondary"):
                             if delete_detection(detection['id']):
-                                st.rerun()
+                                st.experimental_rerun()
         except Exception as e:
             st.error(f"Failed to load history: {str(e)}")
                     
@@ -3431,40 +3431,94 @@ def show_admin_panel():
     </script>
     """)
     
-    # CSS Styling
+    # Enhanced CSS Styling
     st.markdown("""
     <style>
-    .admin-tab {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background: rgba(255,255,255,0.8);
-        margin-bottom: 1rem;
+    /* Main container styling */
+    .admin-container {
+        background: rgba(255,255,255,0.9);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
+    
+    /* Card styling */
     .admin-card {
         background: white;
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        margin-bottom: 1.5rem;
+        border-radius: 10px;
+        padding: 1.25rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        margin-bottom: 1.25rem;
+        border-left: 4px solid #38a169;
     }
+    
+    /* Model card specific */
     .model-card {
         background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        margin-bottom: 1.5rem;
+        border-radius: 10px;
+        padding: 1.25rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        margin-bottom: 1.25rem;
     }
+    
+    /* System card specific */
     .system-card {
         background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
-        border-radius: 0.5rem;
-        padding: 1.5rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        margin-bottom: 1.5rem;
+        border-radius: 10px;
+        padding: 1.25rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        margin-bottom: 1.25rem;
     }
+    
+    /* Title styling - made smaller */
+    .admin-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #2d3748;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 0.5rem;
+    }
+    
+    /* Section/subtitle styling - made smaller */
+    .admin-section {
+        font-size: 1.1rem;
+        font-weight: 500;
+        color: #4a5568;
+        margin: 1.5rem 0 0.75rem;
+    }
+    
+    /* Smaller subsection titles */
+    .admin-subsection {
+        font-size: 1rem;
+        font-weight: 500;
+        color: #4a5568;
+        margin: 1rem 0 0.5rem;
+    }
+    
+    /* Button container */
     .action-buttons {
         display: flex;
         gap: 0.5rem;
-        margin-top: 1rem;
+        margin-top: 0.75rem;
+    }
+    
+    /* Tab styling */
+    .stTabs [role="tablist"] {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Form input styling */
+    .stTextInput input, .stSelectbox select, .stTextArea textarea {
+        font-size: 0.9rem;
+    }
+    
+    /* Status badges */
+    .status-badge {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        display: inline-block;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -3922,6 +3976,7 @@ def _set_active_model(model_id):
     except Exception as e:
         st.error(f"Failed to set active: {str(e)}")
         return False
+        
 # -------------------------------
 # ⚙️ System Settings Functions
 # -------------------------------
