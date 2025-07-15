@@ -2369,9 +2369,8 @@ def show_home_page():
 # -------------------------------
 # 👁️ Detection Page 
 # -------------------------------
-
 def show_detection_page():
-    """Show the fully functional cataract detection interface"""
+    """Show the detection interface with robust selection handling"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
 
     # Initialize session state for detection results
@@ -2568,6 +2567,7 @@ def show_detection_page():
                         else:
                             st.error("Failed to save detection")
 
+
     # TAB 2: Manage Detections
     with tab2:
         st.markdown('<div class="section-title">Manage Detection Results</div>', unsafe_allow_html=True)
@@ -2594,7 +2594,7 @@ def show_detection_page():
         # Get filtered detections
         detections = get_detections()
         
-        if not detections.empty:
+        if detections is not None and not detections.empty:
             # Apply filters
             if date_filter:
                 detections = detections[pd.to_datetime(detections['detection_date']).dt.date == date_filter]
@@ -2602,9 +2602,6 @@ def show_detection_page():
                 detections = detections[detections['result'].isin(result_filter)]
             detections = detections[detections['confidence'] >= min_confidence]
 
-        if detections.empty:
-            st.info("No detections found matching filters")
-        else:
             # Configure interactive grid
             gb = GridOptionsBuilder.from_dataframe(detections)
             gb.configure_default_column(
@@ -2643,9 +2640,47 @@ def show_detection_page():
                 key='detections_grid'
             )
 
-            # Action buttons
-            selected_rows = grid_response.get("selected_rows", [])
+            # Handle selection safely
+            selected_rows = grid_response.get('selected_rows', [])
             
+            # Check if we have exactly one row selected
+            if isinstance(selected_rows, (list, pd.DataFrame)) and len(selected_rows) == 1:
+                selected = selected_rows[0] if isinstance(selected_rows, list) else selected_rows.iloc[0].to_dict()
+                
+                st.markdown("---")
+                st.markdown(f"### Detailed View: Detection #{selected['id']}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### Patient Information")
+                    st.markdown(f"""
+                    - **Name:** {selected['full_name']}
+                    - **Age:** {selected['age']}
+                    - **Gender:** {selected['gender']}
+                    - **Location:** {selected['village']}, {selected['district']}
+                    """)
+                
+                with col2:
+                    st.markdown("#### Detection Details")
+                    result_color = {
+                        'normal': 'green',
+                        'mild': 'orange',
+                        'severe': 'red',
+                        'conjunctival_growth': 'purple'
+                    }.get(selected['result'], 'blue')
+                    st.markdown(f"""
+                    - **Result:** <span style='color:{result_color}; font-weight:bold'>
+                        {selected['result'].replace('_', ' ').title()}
+                    </span>
+                    - **Confidence:** {selected['confidence']:.2f}%
+                    - **Date:** {selected['detection_date']}
+                    - **Attended by:** {selected['attended_by']}
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("#### Clinical Notes")
+                st.write(selected['notes'] if selected.get('notes') else "No notes available")
+
+            # Action buttons
             st.markdown("### Selected Actions")
             col1, col2, col3 = st.columns(3)
             
@@ -2671,7 +2706,7 @@ def show_detection_page():
                     st.rerun()
             
             with col3:
-                if selected_rows and st.button(
+                if len(selected_rows) > 0 and st.button(
                     "🗑️ Delete Selected",
                     key="delete_selected_btn",
                     type="primary"
@@ -2683,37 +2718,8 @@ def show_detection_page():
                     
                     st.success(f"Deleted {delete_count} records")
                     st.rerun()
-
-            # Detailed view for single selection
-            if len(selected_rows) == 1:
-                selected = selected_rows[0]
-                st.markdown("---")
-                st.markdown(f"### Detailed View: Detection #{selected['id']}")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### Patient Information")
-                    st.markdown(f"""
-                    - **Name:** {selected['full_name']}
-                    - **Age:** {selected['age']}
-                    - **Gender:** {selected['gender']}
-                    - **Location:** {selected['village']}, {selected['district']}
-                    """)
-                
-                with col2:
-                    st.markdown("#### Detection Details")
-                    result_color = result_colors.get(selected['result'], 'blue')
-                    st.markdown(f"""
-                    - **Result:** <span style='color:{result_color}; font-weight:bold'>
-                        {selected['result'].replace('_', ' ').title()}
-                    </span>
-                    - **Confidence:** {selected['confidence']:.2f}%
-                    - **Date:** {selected['detection_date']}
-                    - **Attended by:** {selected['attended_by']}
-                    """, unsafe_allow_html=True)
-                
-                st.markdown("#### Clinical Notes")
-                st.write(selected['notes'] if selected['notes'] else "No notes available")
+        else:
+            st.info("No detections found matching filters")
                 
 # -------------------------------
 # 📅 Appointments Page 
