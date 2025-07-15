@@ -657,56 +657,40 @@ def get_patient_by_id(patient_id):
 # -------------------------------
 # 👁️ Detection Functions 
 # -------------------------------
+
 @st.cache_resource(show_spinner=False)
 def load_detection_model():
-    """Load and validate the active cataract detection model with comprehensive error handling"""
+    """Force-load the active model without validation"""
     try:
         model_info = get_active_model_info()
         if not model_info or 'path' not in model_info:
-            st.error("❌ No active model configured in system settings")
+            st.error("⚠️ No active model configured")
             return None
         
-        # Resolve the model path (handle both relative and absolute paths)
         model_path = Path(model_info['path'])
         if not model_path.is_absolute():
             model_path = REPO_ROOT / model_path
         
-        # Verify the model file exists
         if not model_path.exists():
-            st.error(f"❌ Model file not found at: {model_path}")
+            st.error(f"⚠️ Model file not found at: {model_path}")
             return None
         
-        # Load the TensorFlow model with custom objects if needed
+        # Force load without any validation checks
         try:
             model = load_model(model_path)
+            st.success(f"✅ Model loaded (no validation): {model_info.get('version', 'Unknown')}")
+            return model
         except Exception as e:
             st.error(f"❌ Failed to load model file: {str(e)}")
             return None
-        
-        # Verify the model has the expected structure
-        if not hasattr(model, 'predict'):
-            st.error("❌ Invalid model format - missing predict method")
-            return None
             
-        # Verify input shape matches expected size
-        if len(model.input_shape) != 4 or model.input_shape[1:3] != MODEL_INPUT_SIZE:
-            st.error(f"❌ Model expects input shape {model.input_shape} but requires {MODEL_INPUT_SIZE}")
-            return None
-            
-        # Verify output shape matches expected classes
-        if model.output_shape[1] != len(CLASS_NAMES):
-            st.error(f"❌ Model expects {model.output_shape[1]} classes but we have {len(CLASS_NAMES)}")
-            return None
-            
-        return model
-        
     except Exception as e:
-        st.error(f"❌ Failed to load model: {str(e)}")
+        st.error(f"❌ Unexpected error loading model: {str(e)}")
         return None
 
 @st.cache_resource(show_spinner=False)
 def get_active_model_info():
-    """Get information about the currently active model with proper connection handling"""
+    """Get information about currently active model"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -722,7 +706,6 @@ def get_active_model_info():
                 FROM model_versions mv
                 JOIN users u ON mv.uploaded_by = u.id
                 WHERE mv.path = (SELECT value FROM system_settings WHERE key = 'active_model')
-                ORDER BY mv.uploaded_at DESC
                 LIMIT 1
             ''')
             
@@ -737,138 +720,92 @@ def get_active_model_info():
                     "uploaded_at": model_info[5],
                     "uploaded_by": model_info[6]
                 }
-            return {}
+            return None
     except Exception as e:
-        st.error(f"❌ Error getting active model: {str(e)}")
-        return {}
+        st.error(f"⚠️ Error getting active model: {str(e)}")
+        return None
 
 def enhance_image_quality(img_pil):
-    """Enhance image clarity, brightness, contrast, and sharpness with error handling"""
+    """Basic image enhancement with fallback"""
     try:
         if not img_pil:
-            raise ValueError("No image provided")
+            return img_pil
+            
+        img_array = np.array(img_pil)
+        if img_array.shape[-1] == 3:  # RGB image
+            img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        else:
+            img_cv = img_array.copy()
         
-        # Convert to OpenCV BGR format
-        img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-
-        # Resize for faster enhancement while maintaining aspect ratio
-        height, width = img_cv.shape[:2]
-        if height != MODEL_INPUT_SIZE[0] or width != MODEL_INPUT_SIZE[1]:
-            img_cv = cv2.resize(img_cv, MODEL_INPUT_SIZE, interpolation=cv2.INTER_AREA)
-
-        # Apply detail enhancement
-        img_cv = cv2.detailEnhance(img_cv, sigma_s=10, sigma_r=0.15)
-
-        # Convert back to PIL (RGB)
-        enhanced_pil = Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
-
-        # Enhance brightness (1.0 = no change)
-        enhancer = ImageEnhance.Brightness(enhanced_pil)
-        enhanced_pil = enhancer.enhance(1.2)
-
-        # Enhance contrast (1.0 = no change)
-        enhancer = ImageEnhance.Contrast(enhanced_pil)
-        enhanced_pil = enhancer.enhance(1.3)
-
-        # Enhance sharpness (1.0 = no change)
-        enhancer = ImageEnhance.Sharpness(enhanced_pil)
-        enhanced_pil = enhancer.enhance(2.0)
-
-        return enhanced_pil
+        img_cv = cv2.resize(img_cv, MODEL_INPUT_SIZE, interpolation=cv2.INTER_AREA)
+        enhanced = cv2.detailEnhance(img_cv, sigma_s=10, sigma_r=0.15)
+        return Image.fromarray(cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB))
+        
     except Exception as e:
         st.warning(f"⚠️ Image enhancement failed: {str(e)}")
-        return img_pil  # fallback to original
+        return img_pil
 
 def preprocess_image(img_pil):
-    """Resize, enhance, and normalize image for model input with comprehensive validation"""
+    """Basic preprocessing with error handling"""
     try:
         if not img_pil:
-            raise ValueError("No image provided")
-        
-        # Step 1: Enhance image quality
+            return None
+            
         enhanced_img = enhance_image_quality(img_pil)
-
-        # Step 2: Resize and convert to array
-        img = enhanced_img.resize(MODEL_INPUT_SIZE)
-        img_array = image.img_to_array(img)
-
-        # Step 3: Normalize and add batch dimension
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = img_array / 255.0  # Normalize to [0,1]
-
-        return img_array
+        img_array = image.img_to_array(enhanced_img.resize(MODEL_INPUT_SIZE))
+        return np.expand_dims(img_array, axis=0) / 255.0
+        
     except Exception as e:
         st.error(f"❌ Image preprocessing failed: {str(e)}")
         return None
 
 def predict_image(img_path, model):
-    """Make prediction on uploaded image with full error handling"""
+    """Make prediction with fallback for invalid models"""
     try:
-        if not img_path or not model:
-            raise ValueError("Missing image or model")
-        
-        # Load original image
-        try:
-            img = Image.open(img_path)
-        except Exception as e:
-            raise ValueError(f"Could not open image: {str(e)}")
-        
-        # Preprocess the image (includes enhancement)
+        if not model:  # If model failed to load
+            return "error", 0.0
+            
+        img = Image.open(img_path)
         img_array = preprocess_image(img)
         if img_array is None:
             return None, None
-
-        # Make prediction with timing
-        start_time = time.time()
+            
         predictions = model.predict(img_array)
-        inference_time = time.time() - start_time
-        
-        # Get top prediction
-        predicted_idx = np.argmax(predictions[0])
-        predicted_class = CLASS_NAMES[predicted_idx]
-        confidence = np.max(predictions[0]) * 100
-        
-        st.info(f"🔍 Prediction took {inference_time:.2f} seconds")
+        predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
+        confidence = float(np.max(predictions[0]) * 100
         return predicted_class, confidence
         
     except Exception as e:
-        st.error(f"❌ Error during prediction: {str(e)}")
+        st.error(f"❌ Prediction failed: {str(e)}")
         return None, None
 
 def save_detection(patient_id, result, confidence, attended_by, notes="", image_path=None):
-    """Save detection results to database with transaction handling"""
+    """Save detection results with transaction safety"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
-            
-            # Start transaction
             cursor.execute("BEGIN TRANSACTION")
             
-            # Insert detection record
-            if image_path:
-                cursor.execute('''
-                    INSERT INTO detections 
-                    (patient_id, result, confidence, attended_by, notes, image_path, detection_date)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ''', (patient_id, result, confidence, attended_by, notes, image_path))
-            else:
-                cursor.execute('''
-                    INSERT INTO detections 
-                    (patient_id, result, confidence, attended_by, notes, detection_date)
-                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ''', (patient_id, result, confidence, attended_by, notes))
+            query = '''
+                INSERT INTO detections 
+                (patient_id, result, confidence, attended_by, notes, image_path, detection_date)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''' if image_path else '''
+                INSERT INTO detections 
+                (patient_id, result, confidence, attended_by, notes, detection_date)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            '''
             
+            params = (patient_id, result, confidence, attended_by, notes, image_path) if image_path else \
+                     (patient_id, result, confidence, attended_by, notes)
+            
+            cursor.execute(query, params)
             detection_id = cursor.lastrowid
-            
-            # Commit transaction
             conn.commit()
             return detection_id
             
-    except sqlite3.Error as e:
-        st.error(f"❌ Database error saving detection: {str(e)}")
-        return None
     except Exception as e:
-        st.error(f"❌ Error saving detection: {str(e)}")
+        st.error(f"⚠️ Error saving detection: {str(e)}")
         return None
 
 def get_patient(patient_id):
@@ -2305,7 +2242,7 @@ def show_home_page():
 # 👁️ Detection Page 
 # -------------------------------
 def show_detection_page():
-    """Show the cataract detection interface with simplified model loading"""
+    """Show cataract detection interface with forced model loading"""
     st.markdown('<h1 class="section-title">👁️ Cataract Detection</h1>', unsafe_allow_html=True)
 
     # Initialize session state
@@ -2314,7 +2251,7 @@ def show_detection_page():
     if 'selected_patient' not in st.session_state:
         st.session_state.selected_patient = None
 
-    # Load model info - no validation
+    # Display current model info (no validation)
     model_info = get_active_model_info()
     with st.expander("ℹ️ Current Model Information", expanded=True):
         if model_info:
@@ -2324,24 +2261,23 @@ def show_detection_page():
             - **Uploaded by:** {model_info.get('uploaded_by', 'N/A')}
             """)
         else:
-            st.error("❌ No active model configured - detection unavailable")
+            st.error("❌ No active model configured")
 
     # Main tabs
     tab1, tab2 = st.tabs(["New Detection", "Detection History"])
 
     # TAB 1: New Detection
     with tab1:
-        # Only enable camera if model exists
         use_camera = st.checkbox("🎥 Use Camera", value=False, 
                                disabled=not model_info,
                                help="Camera disabled when no active model is configured")
 
-        # Patient Selection Section
+        # Patient Selection
         st.markdown("### Patient Information")
         col1, col2 = st.columns(2)
         
         with col1:
-            # Existing Patient Selection
+            # Existing Patient
             try:
                 patients = get_patients()
                 if patients.empty:
@@ -2362,7 +2298,7 @@ def show_detection_page():
                 st.error(f"Failed to load patients: {str(e)}")
 
         with col2:
-            # New Patient Registration
+            # New Patient
             with st.form("patient_form", clear_on_submit=True):
                 full_name = st.text_input("Full Name*")
                 age = st.number_input("Age*", min_value=1, max_value=120)
@@ -2417,28 +2353,29 @@ def show_detection_page():
                             with open(temp_file, "wb") as f:
                                 f.write(img.getbuffer() if use_camera else img.getvalue())
 
-                            # Load model directly without validation
-                            model = load_model(REPO_ROOT / model_info['path'])
-                            
-                            # Predict
-                            img_array = preprocess_image(Image.open(temp_file))
-                            predictions = model.predict(img_array)
-                            predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
-                            confidence = float(np.max(predictions[0]) * 100)
+                            # Force-load model without validation
+                            try:
+                                model = load_model(REPO_ROOT / model_info['path'])
+                                img_array = preprocess_image(Image.open(temp_file))
+                                predictions = model.predict(img_array)
+                                predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
+                                confidence = float(np.max(predictions[0]) * 100
 
-                            st.session_state.detection_results = {
-                                "patient_id": patient['id'],
-                                "image_path": str(temp_file),
-                                "predicted_class": predicted_class,
-                                "confidence": confidence
-                            }
-                            st.rerun()
+                                st.session_state.detection_results = {
+                                    "patient_id": patient['id'],
+                                    "image_path": str(temp_file),
+                                    "predicted_class": predicted_class,
+                                    "confidence": confidence
+                                }
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Model prediction failed: {str(e)}")
+                                if 'temp_file' in locals() and temp_file.exists():
+                                    temp_file.unlink()
                         except Exception as e:
                             st.error(f"Analysis failed: {str(e)}")
-                            if 'temp_file' in locals() and temp_file.exists():
-                                temp_file.unlink()
 
-            # Show results if available
+            # Show results
             if st.session_state.detection_results:
                 results = st.session_state.detection_results
                 
@@ -2507,10 +2444,10 @@ def show_detection_page():
                     use_container_width=True
                 )
                 
-                # Detailed view selector
+                # Detailed view
                 detection_ids = detections['id'].tolist()
                 selected_id = st.selectbox(
-                    "View details for detection:",
+                    "View details:",
                     detection_ids,
                     format_func=lambda x: f"Detection #{x}"
                 )
@@ -2535,7 +2472,6 @@ def show_detection_page():
                         st.markdown("**Notes:**")
                         st.write(detection['notes'] or "No notes available")
                         
-                        # Delete button
                         if st.button("Delete Detection", type="secondary"):
                             if delete_detection(detection['id']):
                                 st.rerun()
