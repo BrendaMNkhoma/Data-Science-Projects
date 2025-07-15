@@ -660,7 +660,7 @@ def get_patient_by_id(patient_id):
 
 @st.cache_resource(show_spinner=False)
 def load_detection_model():
-    """Force-load the active model without validation"""
+    """Force-load the active cataract detection model without validation"""
     try:
         model_info = get_active_model_info()
         if not model_info or 'path' not in model_info:
@@ -675,13 +675,13 @@ def load_detection_model():
             st.error(f"⚠️ Model file not found at: {model_path}")
             return None
         
-        # Force load without any validation checks
+        # Force load without validation
         try:
             model = load_model(model_path)
-            st.success(f"✅ Model loaded (no validation): {model_info.get('version', 'Unknown')}")
+            st.success(f"✅ Model loaded: {model_info.get('version', 'Unknown version')}")
             return model
         except Exception as e:
-            st.error(f"❌ Failed to load model file: {str(e)}")
+            st.error(f"❌ Failed to load model: {str(e)}")
             return None
             
     except Exception as e:
@@ -726,19 +726,25 @@ def get_active_model_info():
         return None
 
 def enhance_image_quality(img_pil):
-    """Basic image enhancement with fallback"""
+    """Enhance image quality with basic error handling"""
     try:
         if not img_pil:
             return img_pil
             
+        # Convert to numpy array
         img_array = np.array(img_pil)
-        if img_array.shape[-1] == 3:  # RGB image
+        
+        # Convert to OpenCV format if RGB
+        if img_array.shape[-1] == 3:
             img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         else:
             img_cv = img_array.copy()
         
-        img_cv = cv2.resize(img_cv, MODEL_INPUT_SIZE, interpolation=cv2.INTER_AREA)
+        # Resize and enhance
+        img_cv = cv2.resize(img_cv, MODEL_INPUT_SIZE)
         enhanced = cv2.detailEnhance(img_cv, sigma_s=10, sigma_r=0.15)
+        
+        # Convert back to PIL
         return Image.fromarray(cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB))
         
     except Exception as e:
@@ -746,7 +752,7 @@ def enhance_image_quality(img_pil):
         return img_pil
 
 def preprocess_image(img_pil):
-    """Basic preprocessing with error handling"""
+    """Basic image preprocessing"""
     try:
         if not img_pil:
             return None
@@ -761,10 +767,10 @@ def preprocess_image(img_pil):
 
 def predict_image(img_path, model):
     """Make prediction with fallback for invalid models"""
+    if model is None:
+        return "error", 0.0
+        
     try:
-        if not model:  # If model failed to load
-            return "error", 0.0
-            
         img = Image.open(img_path)
         img_array = preprocess_image(img)
         if img_array is None:
@@ -809,7 +815,7 @@ def save_detection(patient_id, result, confidence, attended_by, notes="", image_
         return None
 
 def get_patient(patient_id):
-    """Get single patient by ID with proper error handling"""
+    """Get patient by ID"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -818,51 +824,33 @@ def get_patient(patient_id):
                 WHERE id = ?
             ''', (patient_id,))
             row = cursor.fetchone()
-            
             if row:
                 columns = [col[0] for col in cursor.description]
                 return dict(zip(columns, row))
             return None
     except Exception as e:
-        st.error(f"❌ Database error: {str(e)}")
+        st.error(f"⚠️ Error getting patient: {str(e)}")
         return None
 
-def handle_new_patient():
-    """Quick patient registration form with validation"""
-    with st.form("new_patient_form", clear_on_submit=True):
-        cols = st.columns(2)
-        full_name = cols[0].text_input("Full Name*", max_chars=100)
-        age = cols[1].number_input("Age*", min_value=1, max_value=120, value=30)
-        gender = st.selectbox("Gender*", ["Male", "Female", "Other"])
-        village = cols[0].text_input("Village*", max_chars=50)
-        district = cols[1].text_input("District*", max_chars=50)
-        
-        if st.form_submit_button("Register Patient"):
-            if not all([full_name, age, village, district]):
-                st.error("Missing required fields (*)")
-                return None, None
-                
-            try:
-                with sqlite3.connect(DB_NAME) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO patients 
-                        (full_name, age, gender, village, district)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (full_name.strip(), age, gender, village.strip(), district.strip()))
-                    patient_id = cursor.lastrowid
-                    conn.commit()
-                    
-                    st.success("Patient registered successfully!")
-                    return patient_id, get_patient(patient_id)
-            except Exception as e:
-                st.error(f"❌ Registration failed: {str(e)}")
-                return None, None
-    
-    return None, None
+def handle_new_patient(full_name, age, gender, village, district):
+    """Register new patient"""
+    try:
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO patients 
+                (full_name, age, gender, village, district)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (full_name.strip(), age, gender, village.strip(), district.strip()))
+            patient_id = cursor.lastrowid
+            conn.commit()
+            return patient_id, get_patient(patient_id)
+    except Exception as e:
+        st.error(f"❌ Registration failed: {str(e)}")
+        return None, None
 
-def get_detections():
-    """Get all detections with patient info and proper error handling"""
+def get_detections(limit=100):
+    """Get detection history"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             query = '''
@@ -870,49 +858,56 @@ def get_detections():
                     d.id,
                     d.patient_id,
                     p.full_name,
-                    p.gender,
                     p.age,
+                    p.gender,
                     d.result,
                     d.confidence,
-                    d.attended_by,
-                    d.notes,
+                    u.full_name as attended_by,
                     datetime(d.detection_date, 'localtime') as detection_date,
                     d.image_path
                 FROM detections d
                 JOIN patients p ON d.patient_id = p.id
-                ORDER BY d.detection_date DESC, d.id DESC
+                JOIN users u ON d.attended_by = u.id
+                ORDER BY d.detection_date DESC
+                LIMIT ?
             '''
-            return pd.read_sql_query(query, conn)
+            return pd.read_sql_query(query, conn, params=(limit,))
     except Exception as e:
-        st.error(f"❌ Error getting detections: {str(e)}")
+        st.error(f"⚠️ Error getting detections: {str(e)}")
         return pd.DataFrame()
 
-def get_detection_by_id(detection_id):
-    """Get a specific detection by ID with error handling"""
+def get_detection_details(detection_id):
+    """Get detailed detection record"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT 
-                    d.*, 
+                    d.*,
                     p.full_name,
+                    p.age,
+                    p.gender,
+                    p.village,
+                    p.district,
+                    u.full_name as attended_by_name,
                     datetime(d.detection_date, 'localtime') as detection_date
                 FROM detections d
                 JOIN patients p ON d.patient_id = p.id
+                JOIN users u ON d.attended_by = u.id
                 WHERE d.id = ?
             ''', (detection_id,))
-            detection = cursor.fetchone()
             
+            detection = cursor.fetchone()
             if detection:
                 columns = [col[0] for col in cursor.description]
                 return dict(zip(columns, detection))
             return None
     except Exception as e:
-        st.error(f"❌ Error getting detection: {str(e)}")
+        st.error(f"⚠️ Error getting detection details: {str(e)}")
         return None
 
-def update_detection(detection_id, new_result, new_confidence, new_notes):
-    """Update detection record with transaction safety"""
+def update_detection(detection_id, updates):
+    """Update detection record"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
@@ -920,41 +915,42 @@ def update_detection(detection_id, new_result, new_confidence, new_notes):
             
             cursor.execute('''
                 UPDATE detections 
-                SET result = ?, 
-                    confidence = ?, 
-                    notes = ?,
-                    detection_date = CURRENT_TIMESTAMP
+                SET result = ?, confidence = ?, notes = ?
                 WHERE id = ?
-            ''', (new_result, new_confidence, new_notes, detection_id))
+            ''', (
+                updates.get('result'),
+                updates.get('confidence'),
+                updates.get('notes', ''),
+                detection_id
+            ))
             
-            if cursor.rowcount != 1:
+            if cursor.rowcount == 0:
                 conn.rollback()
                 st.error("No detection found to update")
                 return False
                 
             conn.commit()
-            st.success("Detection updated successfully!")
+            st.success("✅ Detection updated successfully!")
             return True
     except Exception as e:
         st.error(f"❌ Error updating detection: {str(e)}")
         return False
 
 def delete_detection(detection_id):
-    """Delete detection record with verification"""
+    """Delete detection record"""
     try:
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
             cursor.execute("BEGIN TRANSACTION")
-            
-            cursor.execute('DELETE FROM detections WHERE id = ?', (detection_id,))
-            
-            if cursor.rowcount != 1:
+            cursor.execute('SELECT id FROM detections WHERE id = ?', (detection_id,))
+            if not cursor.fetchone():
                 conn.rollback()
-                st.error("No detection found to delete")
+                st.error("Detection not found")
                 return False
                 
+            cursor.execute('DELETE FROM detections WHERE id = ?', (detection_id,))
             conn.commit()
-            st.success("Detection deleted successfully!")
+            st.success("✅ Detection deleted successfully!")
             return True
     except Exception as e:
         st.error(f"❌ Error deleting detection: {str(e)}")
