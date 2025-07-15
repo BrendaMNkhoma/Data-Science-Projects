@@ -4203,7 +4203,7 @@ def _display_model_management():
             
             if not models.empty:
                 # Add file existence check
-                models['exists'] = models['path'].apply(
+                models['exists'] = models['path'].apply()
                     lambda x: (REPO_ROOT / x).exists() if not os.path.isabs(x) else os.path.exists(x)
                 
                 # Configure grid
